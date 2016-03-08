@@ -1,0 +1,4 @@
+name = "BlastoutAnalyze"
+# badges = ["travis"]
+module_maker="ModuleBuildTiny"
+

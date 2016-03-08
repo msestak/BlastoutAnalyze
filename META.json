@@ -1,0 +1,74 @@
+{
+   "abstract" : "It's barebones modulino to build custom scripts. Useful snipets go here.",
+   "author" : [
+      "Martin Sebastijan Šestak"
+   ],
+   "dynamic_config" : 0,
+   "generated_by" : "Minilla/v2.5.0, CPAN::Meta::Converter version 2.143240",
+   "license" : [
+      "perl_5"
+   ],
+   "meta-spec" : {
+      "url" : "http://search.cpan.org/perldoc?CPAN::Meta::Spec",
+      "version" : "2"
+   },
+   "name" : "BlastoutAnalyze",
+   "no_index" : {
+      "directory" : [
+         "t",
+         "xt",
+         "inc",
+         "share",
+         "eg",
+         "examples",
+         "author",
+         "builder"
+      ]
+   },
+   "prereqs" : {
+      "configure" : {
+         "requires" : {
+            "Module::Build::Tiny" : "0.035"
+         }
+      },
+      "develop" : {
+         "requires" : {
+            "Regexp::Debugger" : "0",
+            "Term::ReadKey" : "0",
+            "Test::CPAN::Meta" : "0",
+            "Test::MinimumVersion::Fast" : "0.04",
+            "Test::PAUSE::Permissions" : "0.04",
+            "Test::Pod" : "1.41",
+            "Test::Spellunker" : "v0.2.7"
+         }
+      },
+      "runtime" : {
+         "requires" : {
+            "Capture::Tiny" : "0",
+            "Carp" : "0",
+            "DBD::mysql" : "0",
+            "DBI" : "0",
+            "Data::Dumper" : "0",
+            "Data::Printer" : "0",
+            "Exporter" : "0",
+            "File::Find::Rule" : "0",
+            "Getopt::Long" : "0",
+            "Log::Log4perl" : "0",
+            "Path::Tiny" : "0",
+            "Pod::Usage" : "0",
+            "autodie" : "0",
+            "perl" : "5.010001",
+            "strict" : "0",
+            "warnings" : "0"
+         }
+      },
+      "test" : {
+         "requires" : {
+            "Test::Log::Log4perl" : "0",
+            "Test::More" : "0.98"
+         }
+      }
+   },
+   "release_status" : "unstable",
+   "version" : "0.01"
+}

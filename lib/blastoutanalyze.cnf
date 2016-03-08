@@ -1,0 +1,15 @@
+[General]
+#in       = /home/msestak/prepare_blast/out/dr_plus/
+#out      = /msestak/gitdir/MySQLinstall
+#infile   = /home/msestak/mysql-5.6.27-linux-glibc2.5-x86_64.tar.gz
+#outfile  = /home/msestak/prepare_blast/out/dr_04_02_2016.xlsx
+
+[Database]
+host     = localhost
+database = test
+user     = msandbox
+password = msandbox
+port     = 5625
+socket   = /tmp/mysql_sandbox5625.sock
+charset  = ascii
+
