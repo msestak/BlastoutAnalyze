@@ -1,6 +1,6 @@
 # NAME
 
-BlastoutAnalyze - It's barebones modulino to build custom scripts. Useful snipets go here.
+BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
 
 # SYNOPSIS
 
@@ -9,7 +9,7 @@ BlastoutAnalyze - It's barebones modulino to build custom scripts. Useful snipet
 
 # DESCRIPTION
 
-BlastoutAnalyze is modulino used as starting point for modulino development. It includes config, command-line and logging management.
+BlastoutAnalyze is modulino used to analyze BLAST database (to get content in genomes and sequences) and BLAST output (to figure out wwhere are hits comming from. It includes config, command-line and logging management.
 
     --mode=mode                Description
     --mode=create_db           drops and recreates database in MySQL (needs MySQL connection parameters from config)
@@ -29,6 +29,16 @@ BlastoutAnalyze is modulino used as starting point for modulino development. It 
         BlastoutAnalyze.pm --mode=create_db -d test_db_here
 
     Drops ( if it exists) and recreates database in MySQL (needs MySQL connection parameters to connect to MySQL).
+
+- import\_blastout
+
+        # options from command line
+        BlastoutAnalyze.pm --mode=import_blastout -if t/data/sc_OUTplus100 -o t/data/ -d hs_plus -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+
+        # options from config
+        BlastoutAnalyze.pm --mode=import_blastout -if t/data/sc_OUTplus100 -o t/data/ -d hs_plus
+
+    Extracts columns (prot\_id, ti, pgi, e\_value with no duplicates), writes them to tmp file and imports that file into MySQL (needs MySQL connection parameters to connect to MySQL).
 
 # CONFIGURATION
 

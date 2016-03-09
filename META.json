@@ -1,5 +1,5 @@
 {
-   "abstract" : "It's barebones modulino to build custom scripts. Useful snipets go here.",
+   "abstract" : "It's a modulino used to analyze BLAST output and database.",
    "author" : [
       "Martin Sebastijan Šestak"
    ],
@@ -70,5 +70,13 @@
       }
    },
    "release_status" : "unstable",
-   "version" : "0.01"
+   "resources" : {
+      "repository" : {
+         "url" : "https://bitbucket.org/mocnii/blastoutanalyze.git"
+      }
+   },
+   "version" : "0.01",
+   "x_contributors" : [
+      "mocnii <msestak@irb.hr>"
+   ]
 }

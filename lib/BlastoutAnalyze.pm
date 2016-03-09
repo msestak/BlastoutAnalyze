@@ -31,6 +31,7 @@ our @EXPORT_OK = qw{
   _dbi_connect
   _create_table
   blastout_analyze
+  import_blastout
 
 };
 
@@ -74,7 +75,8 @@ sub run {
     #call write modes (different subs that print different jobs)
     my %dispatch = (
         create_db           => \&create_db,              # drop and recreate database in MySQL
-        blastout_analyze    => \&blastout_analyze,       # analyze BLAST output fil and extract prot_id => ti information
+        blastout_analyze    => \&blastout_analyze,       # analyze BLAST output and extract prot_id => ti information
+        import_blastout     => \&import_blastout,        # import BLAST output
 
     );
 
@@ -547,6 +549,174 @@ sub blastout_analyze {
 }
 
 
+### INTERFACE SUB ###
+# Usage      : --mode=import_blastout
+# Purpose    : loads BLAST output to MySQL database
+# Returns    : nothing
+# Parameters : ( $param_href )
+# Throws     : croaks for parameters
+# Comments   : it removes duplicates (same tax_id) per gene
+# See Also   : utility sub _extract_blastout()
+sub import_blastout {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak( 'import_blastout() needs a hash_ref' ) unless @_ == 1;
+    my ($param_href) = @_;
+
+    my $infile = $param_href->{infile} or $log->logcroak('no $infile specified on command line!');
+    my $out    = $param_href->{out}    or $log->logcroak('no $out specified on command line!');
+    my $table           = path($infile)->basename;
+    $table =~ s/\./_/g;    #for files that have dots in name
+    my $blastout_import = path($out, $table . "_formated");
+
+    #first shorten the blastout file and extract useful columns
+    _extract_blastout( { infile => $infile, blastout_import => $blastout_import } );
+
+    #get new handle
+    my $dbh = _dbi_connect($param_href);
+
+    #create table
+    my $create_query = qq{
+    CREATE TABLE IF NOT EXISTS $table (
+    prot_id VARCHAR(40) NOT NULL,
+    ti INT UNSIGNED NOT NULL,
+    pgi CHAR(19) NOT NULL,
+    e_value REAL NOT NULL,
+    PRIMARY KEY(prot_id, ti, pgi)
+    )};
+    _create_table( { table_name => $table, dbh => $dbh, query => $create_query } );
+
+    #import table
+    my $load_query = qq{
+    LOAD DATA INFILE '$blastout_import'
+    INTO TABLE $table } . q{ FIELDS TERMINATED BY '\t'
+    LINES TERMINATED BY '\n' 
+    (prot_id, ti, pgi, e_value)
+    };
+    eval { $dbh->do( $load_query, { async => 1 } ) };
+
+    # check status while running
+    my $dbh_check             = _dbi_connect($param_href);
+    until ( $dbh->mysql_async_ready ) {
+        my $processlist_query = qq{
+        SELECT TIME_MS, STATE FROM INFORMATION_SCHEMA.PROCESSLIST
+        WHERE DB = ? AND INFO LIKE 'LOAD DATA INFILE%';
+        };
+        my ( $time_ms, $state );
+        my $sth = $dbh_check->prepare($processlist_query);
+        $sth->execute($param_href->{database});
+        $sth->bind_columns( \( $time_ms, $state ) );
+        while ( $sth->fetchrow_arrayref ) {
+            $time_ms = $time_ms / 1000;
+            my $print = sprintf( "Time running:%0.3f sec\tSTATE:%s\n", $time_ms, $state );
+            $log->trace( $print );
+            sleep 10;
+        }
+    }
+    my $rows;
+	eval { $rows = $dbh->mysql_async_result; };
+    $log->info( "Action: import inserted $rows rows!" ) unless $@;
+    $log->error( "Error: loading $table failed: $@" ) if $@;
+
+    # add index
+    my $alter_query = qq{
+    ALTER TABLE $table ADD INDEX tix(ti)
+    };
+    eval { $dbh->do( $alter_query, { async => 1 } ) };
+
+    # check status while running
+    my $dbh_check2            = _dbi_connect($param_href);
+    until ( $dbh->mysql_async_ready ) {
+        my $processlist_query = qq{
+        SELECT TIME_MS, STATE FROM INFORMATION_SCHEMA.PROCESSLIST
+        WHERE DB = ? AND INFO LIKE 'ALTER%';
+        };
+        my ( $time_ms, $state );
+        my $sth = $dbh_check2->prepare($processlist_query);
+        $sth->execute($param_href->{database});
+        $sth->bind_columns( \( $time_ms, $state ) );
+        while ( $sth->fetchrow_arrayref ) {
+            $time_ms = $time_ms / 1000;
+            my $print = sprintf( "Time running:%0.3f sec\tSTATE:%s\n", $time_ms, $state );
+            $log->trace( $print );
+            sleep 10;
+        }
+    }
+
+    #report success or failure
+    $log->error( "Error: adding index tix on $table failed: $@" ) if $@;
+    $log->info( "Action: Index tix on $table added successfully!" ) unless $@;
+	
+	#delete file used to import so it doesn't use disk space
+	unlink $blastout_import and $log->warn("File $blastout_import unlinked!");
+
+    return;
+}
+
+### INTERNAL UTILITY ###
+# Usage      : _extract_blastout( { infile => $infile, blastout_import => $blastout_import } );
+# Purpose    : extracts useful columns from blastout file and saves them into file
+# Returns    : nothing
+# Parameters : ($param_href)
+# Throws     : croaks for parameters
+# Comments   : needed for --mode=import_blastout()
+# See Also   : import_blastout()
+sub _extract_blastout {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak( 'extract_blastout() needs {hash_ref}' ) unless @_ == 1;
+    my ($extract_href) = @_;
+
+    open( my $blastout_fh, "< :encoding(ASCII)", $extract_href->{infile} ) or $log->logdie( "Error: BLASTout file not found:$!" );
+    open( my $blastout_fmt_fh, "> :encoding(ASCII)", $extract_href->{blastout_import} ) or $log->logdie( "Error: BLASTout file can't be created:$!" );
+
+    # needed for filtering duplicates
+    # idea is that duplicates come one after another
+    my $prot_prev    = '';
+    my $pgi_prev     = 0;
+    my $ti_prev      = 0;
+	my $formated_cnt = 0;
+
+    # in blastout
+    #ENSG00000151914|ENSP00000354508    pgi|34252924|ti|9606|pi|0|  100.00  7461    0   0   1   7461    1   7461    0.0 1.437e+04
+    
+	$log->info( "Report: started processing of $extract_href->{infile}" );
+    local $.;
+    while ( <$blastout_fh> ) {
+        chomp;
+
+		my ($prot_id, $hit, undef, undef, undef, undef, undef, undef, undef, undef, $e_value, undef) = split "\t", $_;
+		my ($pgi, $ti, undef) = $hit =~ m{pgi\|(\d+)\|ti\|(\d+)\|pi\|(?:\d+)\|};
+
+        # check for duplicates for same gene_id with same tax_id and pgi that differ only in e_value
+        if (  "$prot_prev" . "$pgi_prev" . "$ti_prev" ne "$prot_id" . "$pgi" . "$ti" ) {
+            say {$blastout_fmt_fh} $prot_id, "\t", $ti, "\t", $pgi, "\t", $e_value;
+			$formated_cnt++;
+        }
+
+        # set found values for next line to check duplicates
+        $prot_prev = $prot_id;
+        $pgi_prev  = $pgi;
+        $ti_prev   = $ti;
+
+		# show progress
+        if ($. % 1000000 == 0) {
+            $log->trace( "$. lines processed!" );
+        }
+
+    }   # end while reading blastout
+
+    $log->info( "Report: file $extract_href->{blastout_import} printed successfully with $formated_cnt lines (from $. original lines)" );
+
+    return;
+}
+
+
+
+
+
+
+
+
+
 
 1;
 __END__
@@ -586,6 +756,18 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
  BlastoutAnalyze.pm --mode=create_db -d test_db_here
 
 Drops ( if it exists) and recreates database in MySQL (needs MySQL connection parameters to connect to MySQL).
+
+=item import_blastout
+
+ # options from command line
+ BlastoutAnalyze.pm --mode=import_blastout -if t/data/sc_OUTplus100 -o t/data/ -d hs_plus -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+
+ # options from config
+ BlastoutAnalyze.pm --mode=import_blastout -if t/data/sc_OUTplus100 -o t/data/ -d hs_plus
+
+Extracts columns (prot_id, ti, pgi, e_value with no duplicates), writes them to tmp file and imports that file into MySQL (needs MySQL connection parameters to connect to MySQL).
+
+
 
 =back
 
