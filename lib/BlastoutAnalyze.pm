@@ -30,6 +30,7 @@ our @EXPORT_OK = qw{
   _exec_cmd
   _dbi_connect
   _create_table
+  blastout_analyze
 
 };
 
@@ -73,6 +74,7 @@ sub run {
     #call write modes (different subs that print different jobs)
     my %dispatch = (
         create_db           => \&create_db,              # drop and recreate database in MySQL
+        blastout_analyze    => \&blastout_analyze,       # analyze BLAST output fil and extract prot_id => ti information
 
     );
 
@@ -504,6 +506,47 @@ sub create_db {
 }
 
 
+### INTERFACE SUB ###
+# Usage      : --mode=blastout_analyze
+# Purpose    : to analyze BLAST output and find tax_id hits per gene
+# Returns    : nothing
+# Parameters : $param_href
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : 
+sub blastout_analyze {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('blastout_analyze() needs a $param_href') unless @_ == 1;
+    my ($param_href) = @_;
+
+    my $infile = $param_href->{infile} or $log->logcroak('no $infile specified on command line!');
+    my $out    = $param_href->{out}      or $log->logcroak('no $out specified on command line!');
+
+	# open fh for BLAST output
+	open (my $in_fh, "< :encoding(ASCII)", $infile) or $log->logdie("Error: can't open $infile for reading:$!");
+
+	# create hash that will hold prot_id => ti results
+	my %prot_ti_hash;
+	while (<$in_fh>) {
+		chomp;
+		
+		my ($prot_id, $hit, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef) = split "\t", $_;
+		my ($pgi, $ti, undef) = $hit =~ m{pgi\|(\d+)\|ti\|(\d+)\|pi\|(\d+)\|};
+
+		$prot_ti_hash{$prot_id}->{$ti}++;   # increments the value
+	
+
+	}   # end while reading file
+
+	p(%prot_ti_hash);
+
+	
+	
+
+    return;
+}
+
+
 
 1;
 __END__
@@ -512,7 +555,7 @@ __END__
 
 =head1 NAME
 
-BlastoutAnalyze - It's barebones modulino to build custom scripts. Useful snipets go here.
+BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
 
 =head1 SYNOPSIS
 
@@ -521,7 +564,7 @@ BlastoutAnalyze - It's barebones modulino to build custom scripts. Useful snipet
 
 =head1 DESCRIPTION
 
-BlastoutAnalyze is modulino used as starting point for modulino development. It includes config, command-line and logging management.
+BlastoutAnalyze is modulino used to analyze BLAST database (to get content in genomes and sequences) and BLAST output (to figure out wwhere are hits comming from. It includes config, command-line and logging management.
 
  --mode=mode                Description
  --mode=create_db           drops and recreates database in MySQL (needs MySQL connection parameters from config)
