@@ -55,6 +55,7 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
         BlastoutAnalyze.pm --mode=import_map -if t/data/hs3.phmap_names -d hs_plus -v
 
     Removes header from map file and writes columns (prot\_id, phylostrata, ti, psname) to tmp file and imports that file into MySQL (needs MySQL connection parameters to connect to MySQL).
+    It can use PS and TI config sections.
 
 - import\_blastdb\_stats
 
@@ -66,6 +67,7 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
 
     Imports analyze stats file created by AnalyzePhyloDb.
       AnalysePhyloDb -n /home/msestak/dropbox/Databases/db\_02\_09\_2015/data/nr\_raw/nodes.dmp.fmt.new.sync -d /home/msestak/dropbox/Databases/db\_02\_09\_2015/data/cdhit\_large/extracted/ -t 9606 > analyze\_hs\_9606\_cdhit\_large\_extracted
+    It can use PS and TI config sections.
 
 # CONFIGURATION
 

@@ -34,6 +34,7 @@ our @EXPORT_OK = qw{
   import_blastout
   import_map
   import_blastdb_stats
+  import_names
 
 };
 
@@ -76,11 +77,12 @@ sub run {
 
     #call write modes (different subs that print different jobs)
     my %dispatch = (
-        create_db           => \&create_db,              # drop and recreate database in MySQL
-        blastout_analyze    => \&blastout_analyze,       # analyze BLAST output and extract prot_id => ti information
-        import_blastout     => \&import_blastout,        # import BLAST output
-        import_map          => \&import_map,             # import Phylostratigraphic map with header
+        create_db            => \&create_db,              # drop and recreate database in MySQL
+        blastout_analyze     => \&blastout_analyze,       # analyze BLAST output and extract prot_id => ti information
+        import_blastout      => \&import_blastout,        # import BLAST output
+        import_map           => \&import_map,             # import Phylostratigraphic map with header
 		import_blastdb_stats => \&import_blastdb_stats,  # import BLAST database stats file
+		import_names         => \&import_names,          # import names file
 
     );
 
@@ -489,6 +491,38 @@ sub _create_table {
     eval { $dbh->do($create_query) };
     $log->error( "Action: creating $table_name failed: $@" ) if $@;
     $log->trace( "Action: $table_name created successfully!" ) unless $@;
+
+    return;
+}
+
+
+### INTERNAL UTILITY ###
+# Usage      : _load_table_into($tbl_name, $infile, $dbh, $column_list);
+# Purpose    : LOAD DATA INFILE of $infile into $tbl_name
+# Returns    : nothing
+# Parameters : ($tbl_name, $infile, $dbh)
+# Throws     : croaks if wrong number of parameters
+# Comments   : $column_list can be empty
+# See Also   : 
+sub _load_table_into {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_load_table_into() needs {$tbl_name, $infile, $dbh + opt. $column_list}') unless @_ == 3 or 4;
+    my ($tbl_name, $infile, $dbh, $column_list) = @_;
+	$column_list //= '';
+
+	# load query
+    my $load_query = qq{
+    LOAD DATA INFILE '$infile'
+    INTO TABLE $tbl_name } . q{ FIELDS TERMINATED BY '\t'
+    LINES TERMINATED BY '\n' }
+	. '(' . $column_list . ')';
+	$log->trace("Report: $load_query");
+
+	# report number of rows inserted
+	my $rows;
+    eval { $rows = $dbh->do( $load_query ) };
+	$log->error( "Action: loading into table $tbl_name failed: $@" ) if $@;
+	$log->debug( "Action: table $tbl_name inserted $rows rows!" ) unless $@;
 
     return;
 }
@@ -1022,6 +1056,47 @@ sub _read_stats_file {
 }
 
 
+### INTERFACE SUB ###
+# Usage      : --mode=import_names
+# Purpose    : loads names file to MySQL
+# Returns    : nothing
+# Parameters : ( $param_href )
+# Throws     : croaks for parameters
+# Comments   : new format
+# See Also   :
+sub import_names {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak ('import_names() needs a hash_ref' ) unless @_ == 1;
+    my ($param_href) = @_;
+
+    my $infile = $param_href->{infile} or $log->logcroak('no $infile specified on command line!');
+    my $names_tbl = path($infile)->basename;
+    $names_tbl =~ s/\./_/g;    #for files that have dots in name)
+
+    # get new handle
+    my $dbh = _dbi_connect($param_href);
+
+    # create names table
+    my $create_names = sprintf( qq{
+    CREATE TABLE %s (
+    id INT UNSIGNED AUTO_INCREMENT NOT NULL,
+    ti INT UNSIGNED NOT NULL,
+    species_name VARCHAR(200) NOT NULL,
+    PRIMARY KEY(id),
+    KEY(ti),
+    KEY(species_name)
+    )}, $dbh->quote_identifier($names_tbl) );
+	_create_table( { table_name => $names_tbl, dbh => $dbh, query => $create_names } );
+	$log->trace("Report: $create_names");
+
+    #import table
+	my $column_list = 'ti, species_name, @dummy, @dummy';
+	_load_table_into($names_tbl, $infile, $dbh, $column_list);
+
+    return;
+}
+
+
 
 
 
@@ -1092,6 +1167,7 @@ Extracts columns (prot_id, ti, pgi, e_value with no duplicates), writes them to 
  BlastoutAnalyze.pm --mode=import_map -if t/data/hs3.phmap_names -d hs_plus -v
 
 Removes header from map file and writes columns (prot_id, phylostrata, ti, psname) to tmp file and imports that file into MySQL (needs MySQL connection parameters to connect to MySQL).
+It can use PS and TI config sections.
 
 =item import_blastdb_stats
 
@@ -1103,7 +1179,7 @@ Removes header from map file and writes columns (prot_id, phylostrata, ti, psnam
 
 Imports analyze stats file created by AnalyzePhyloDb.
   AnalysePhyloDb -n /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dmp.fmt.new.sync -d /home/msestak/dropbox/Databases/db_02_09_2015/data/cdhit_large/extracted/ -t 9606 > analyze_hs_9606_cdhit_large_extracted
-
+It can use PS and TI config sections.
 
 
 
