@@ -903,56 +903,8 @@ sub import_blastdb_stats {
 	my $temp_stats = path(path($infile)->parent, $stats_genomes_tbl);
 	open (my $tmp_fh, ">", $temp_stats) or $log->logdie("Error: can't open map $temp_stats for writing:$!");
 
-	# prepare statement handle to insert ps lines
-	my $insert_ps = sprintf( qq{
-	INSERT INTO %s (phylostrata, num_of_genomes, ti)
-	VALUES (?, ?, ?)
-	}, $dbh->quote_identifier($stats_ps_tbl) );
-	my $sth = $dbh->prepare($insert_ps);
-	$log->trace("Report: $insert_ps");
-
-	# need to skip header
-	open (my $stats_fh, "<", $infile) or $log->logdie("Error: can't open map $infile for reading:$!");
-	while (<$stats_fh>) {
-		chomp;
-
-		# if ps then summary line
-		if (m/ps/) {
-			#import to stats_ps_tbl
-			my (undef, $ps, $num_of_genomes, $ti, ) = split "\t", $_;
-			$sth->execute($ps, $num_of_genomes, $ti);
-
-
-
-		}
-		# else normal genome in phylostrata line
-		else {
-			my ($ps2, $psti, $num_of_genes, $ti2) = split "\t", $_;
-
-			# update phylostrata with new phylostrata (shorter phylogeny)
-			my $ps_new2;
-			if ( exists $param_href->{ps}->{$ps2} ) {
-				$ps_new2 = $param_href->{ps}->{$ps2};
-				say "LINE:$.\tPS_INFILE:$ps2\tPS_NEW:$ps_new2";
-				$ps2 = $ps_new2;
-			}
-
-			# update psti with new tax_id (shorter phylogeny)
-			my $psti_new;
-			if ( exists $param_href->{ti}->{$psti} ) {
-				$psti_new = $param_href->{ti}->{$psti};
-				#say "LINE:$.\tTI_INFILE:$psti\tTI_NEW:$psti_new";
-				$psti = $psti_new;
-			}
-
-			# print to file
-			say {$tmp_fh} "$ps2\t$psti\t$num_of_genes\t$ti2";
-		}
-	}   # end while reading stats file
-
-	# explicit close needed else it can break
-	close $tmp_fh;
-	$sth->finish;
+	# read and import stats file into MySQL
+	_read_stats_file( { ps_tbl => $stats_ps_tbl, dbh => $dbh, %{$param_href}, tmp_fh => $tmp_fh } );
 
 	# load genomes per phylostrata
     my $load_query = qq{
@@ -973,6 +925,101 @@ sub import_blastdb_stats {
     return;
 }
 
+
+### INTERNAL UTILITY ###
+# Usage      : _read_stats_file( { ps_tbl => $stats_ps_tbl, dbh => $dbh, %{$param_href}, tmp_fh => $tmp_fh } );
+# Purpose    : to read stats file and import it to database
+# Returns    : nothing
+# Parameters : 
+# Throws     : croaks if wrong number of parameters
+# Comments   : part of --mode=import_blastdb_stats
+# See Also   : --mode=import_blastdb_stats
+sub _read_stats_file {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_read_stats_file() needs a $param_href') unless @_ == 1;
+    my ($p_href) = @_;
+
+	# prepare statement handle to insert ps lines
+	my $insert_ps = sprintf( qq{
+	INSERT INTO %s (phylostrata, num_of_genomes, ti)
+	VALUES (?, ?, ?)
+	}, $p_href->{dbh}->quote_identifier($p_href->{ps_tbl}) );
+	my $sth = $p_href->{dbh}->prepare($insert_ps);
+	$log->trace("Report: $insert_ps");
+
+	# prepare statement handle to update ps lines
+	my $update_ps = sprintf( qq{
+	UPDATE %s 
+	SET num_of_genomes = num_of_genomes + ?
+	WHERE phylostrata = ?
+	}, $p_href->{dbh}->quote_identifier($p_href->{ps_tbl}) );
+	my $sth_up = $p_href->{dbh}->prepare($update_ps);
+	$log->trace("Report: $update_ps");
+
+	# read and import ps_table
+	open (my $stats_fh, "<", $p_href->{infile}) or $log->logdie("Error: can't open map $p_href->{infile} for reading:$!");
+	while (<$stats_fh>) {
+		chomp;
+
+		# if ps then summary line
+		if (m/ps/) {
+			#import to stats_ps_tbl
+			my (undef, $ps, $num_of_genomes, $ti, ) = split "\t", $_;
+
+			# update phylostrata with new phylostrata (shorter phylogeny)
+			my $ps_new;
+			if ( exists $p_href->{ps}->{$ps} ) {
+				$ps_new = $p_href->{ps}->{$ps};
+				#say "LINE:$.\tPS_INFILE:$ps\tPS_NEW:$ps_new";
+				$ps = $ps_new;
+			}
+
+			# update psti with new tax_id (shorter phylogeny)
+			my $ti_new;
+			if ( exists $p_href->{ti}->{$ti} ) {
+				$ti_new = $p_href->{ti}->{$ti};
+				#say "LINE:$.\tTI_INFILE:$ti\tTI_NEW:$ti_new";
+				$ti = $ti_new;
+			}
+			
+			# if it fails (ps already exists) update num_of_genomes
+			eval {$sth->execute($ps, $num_of_genomes, $ti); };
+			if ($@) {
+				$sth_up->execute($num_of_genomes, $ps);
+			}
+		}
+		# else normal genome in phylostrata line
+		else {
+			my ($ps2, $psti, $num_of_genes, $ti2) = split "\t", $_;
+
+			# update phylostrata with new phylostrata (shorter phylogeny)
+			my $ps_new2;
+			if ( exists $p_href->{ps}->{$ps2} ) {
+				$ps_new2 = $p_href->{ps}->{$ps2};
+				#say "LINE:$.\tPS_INFILE:$ps2\tPS_NEW:$ps_new2";
+				$ps2 = $ps_new2;
+			}
+
+			# update psti with new tax_id (shorter phylogeny)
+			my $psti_new;
+			if ( exists $p_href->{ti}->{$psti} ) {
+				$psti_new = $p_href->{ti}->{$psti};
+				#say "LINE:$.\tTI_INFILE:$psti\tTI_NEW:$psti_new";
+				$psti = $psti_new;
+			}
+
+			# print to file
+			say { $p_href->{tmp_fh} } "$ps2\t$psti\t$num_of_genes\t$ti2";
+		}
+	}   # end while reading stats file
+
+	# explicit close needed else it can break
+	close $p_href->{tmp_fh};
+	$sth->finish;
+	$sth_up->finish;
+
+    return;
+}
 
 
 
