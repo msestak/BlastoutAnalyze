@@ -32,6 +32,7 @@ our @EXPORT_OK = qw{
   _create_table
   blastout_analyze
   import_blastout
+  import_map
 
 };
 
@@ -70,13 +71,14 @@ sub run {
 
     #get dump of param_href if -v (verbose) flag is on (for debugging)
     my $param_print = sprintf( p($param_href) ) if $verbose;
-    $log->debug( '$param_href = ', "$param_print" ) if $verbose;
+    $log->debug( '$param_href = '."$param_print" ) if $verbose;
 
     #call write modes (different subs that print different jobs)
     my %dispatch = (
         create_db           => \&create_db,              # drop and recreate database in MySQL
         blastout_analyze    => \&blastout_analyze,       # analyze BLAST output and extract prot_id => ti information
         import_blastout     => \&import_blastout,        # import BLAST output
+        import_map          => \&import_map,             # import Phylostratigraphic map with header
 
     );
 
@@ -678,7 +680,7 @@ sub _extract_blastout {
     # in blastout
     #ENSG00000151914|ENSP00000354508    pgi|34252924|ti|9606|pi|0|  100.00  7461    0   0   1   7461    1   7461    0.0 1.437e+04
     
-	$log->info( "Report: started processing of $extract_href->{infile}" );
+	$log->debug( "Report: started processing of $extract_href->{infile}" );
     local $.;
     while ( <$blastout_fh> ) {
         chomp;
@@ -710,6 +712,117 @@ sub _extract_blastout {
 }
 
 
+### INTERNAL UTILITY ###
+# Usage      : --mode=import_map on command name
+# Purpose    : imports map with header format and psname (.phmap_names)
+# Returns    : nothing
+# Parameters : full path to map file and database connection parameters
+# Throws     : croaks if wrong number of parameters
+# Comments   : creates temp files without header for LOAD data infile
+# See Also   : 
+sub import_map {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_import_map() needs {$map_href}') unless @_ == 1;
+    my ($map_href) = @_;
+
+	# check required parameters
+    if ( ! exists $map_href->{infile} ) {$log->logcroak('no $infile specified on command line!');}
+
+	# get name of map table
+	my $map_tbl = path($map_href->{infile})->basename;
+	($map_tbl) = $map_tbl =~ m/\A([^\.]+)\.phmap_names\z/;
+	$map_tbl   .= '_map';
+
+	my $dbh = _dbi_connect($map_href);
+
+    # create map table
+    my $create_query = sprintf( qq{
+	CREATE TABLE IF NOT EXISTS %s (
+	prot_id VARCHAR(40) NOT NULL,
+	phylostrata TINYINT UNSIGNED NOT NULL,
+	ti INT UNSIGNED NOT NULL,
+	psname VARCHAR(200) NULL,
+	PRIMARY KEY(prot_id),
+	KEY(phylostrata),
+	KEY(ti),
+	KEY(psname)
+    ) }, $dbh->quote_identifier($map_tbl) );
+	_create_table( { table_name => $map_tbl, dbh => $dbh, query => $create_query } );
+	$log->trace("Report: $create_query");
+
+	# create tmp filename in same dir as input map with header
+	my $temp_map = path(path($map_href->{infile})->parent, $map_tbl);
+	open (my $tmp_fh, ">", $temp_map) or $log->logdie("Error: can't open map $temp_map for writing:$!");
+
+	# need to skip header
+	open (my $map_fh, "<", $map_href->{infile}) or $log->logdie("Error: can't open map $map_href->{infile} for reading:$!");
+	while (<$map_fh>) {
+		chomp;
+	
+		# check if record (ignore header)
+		next if !/\A(?:[^\t]+)\t(?:[^\t]+)\t(?:[^\t]+)\t(?:[^\t]+)\z/;
+	
+		my ($prot_id, $ps, $ti, $ps_name) = split "\t", $_;
+
+		# this is needed because psname can be short without {cellular_organisms : Eukaryota}
+		my $psname_short;
+		if ($ps_name =~ /:/) {   # {cellular_organisms : Eukaryota}
+			(undef, $psname_short) = split ' : ', $ps_name;
+		}
+		else {   #{Eukaryota}
+			$psname_short = $ps_name;
+		}
+
+		# update map with new phylostrata (shorter phylogeny)
+		my $ps_new;
+		if ( exists $map_href->{ps}->{$ps} ) {
+			$ps_new = $map_href->{ps}->{$ps};
+			#say "LINE:$.\tPS_INFILE:$ps\tPS_NEW:$ps_new";
+			$ps = $ps_new;
+		}
+
+		# update map with new tax_id (shorter phylogeny)
+		my $ti_new;
+		if ( exists $map_href->{ti}->{$ti} ) {
+			$ti_new = $map_href->{ti}->{$ti};
+			#say "LINE:$.\tTI_INFILE:$ti\tTI_NEW:$ti_new";
+			$ti = $ti_new;
+		}
+
+		# update map with new phylostrata name (shorter phylogeny)
+		my $psname_new;
+		if ( exists $map_href->{psname}->{$psname_short} ) {
+			$psname_new = $map_href->{psname}->{$psname_short};
+			#say "LINE:$.\tPS_REAL_NAME:$psname_short\tPSNAME_NEW:$psname_new";
+			$psname_short = $psname_new;
+		}
+
+		# print to tmp map file
+		say {$tmp_fh} "$prot_id\t$ps\t$ti\t$psname_short";
+
+	}   # end while
+
+	# explicit close needed else it can break
+	close $tmp_fh;
+
+	# load tmp map file without header
+    my $load_query = qq{
+    LOAD DATA INFILE '$temp_map'
+    INTO TABLE $map_tbl } . q{ FIELDS TERMINATED BY '\t'
+    LINES TERMINATED BY '\n'
+    };
+	$log->trace("Report: $load_query");
+	my $rows;
+    eval { $rows = $dbh->do( $load_query ) };
+	$log->error( "Action: loading into table $map_tbl failed: $@" ) if $@;
+	$log->debug( "Action: table $map_tbl inserted $rows rows!" ) unless $@;
+
+	# unlink tmp map file
+	unlink $temp_map and $log->trace("Action: $temp_map unlinked");
+
+    return $map_tbl;
+}
+
 
 
 
@@ -729,8 +842,15 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
 
 =head1 SYNOPSIS
 
-    # connection parameters in barebones.cnf
+    # drop and recreate database (connection parameters in blastoutanalyze.cnf)
     BlastoutAnalyze.pm --mode=create_db -d test_db_here
+
+    # remove duplicates and import BLAST output file into MySQL database
+    BlastoutAnalyze.pm --mode=import_blastout -if t/data/sc_OUTplus100 -o t/data/ -d hs_plus
+
+    # remove header and import phylostratigraphic map into MySQL database (reads PS, TI and PSNAME from config)
+    BlastoutAnalyze.pm --mode=import_map -if t/data/hs3.phmap_names -d hs_plus -v
+
 
 =head1 DESCRIPTION
 
@@ -767,13 +887,25 @@ Drops ( if it exists) and recreates database in MySQL (needs MySQL connection pa
 
 Extracts columns (prot_id, ti, pgi, e_value with no duplicates), writes them to tmp file and imports that file into MySQL (needs MySQL connection parameters to connect to MySQL).
 
+=item import_map
+
+ # options from command line
+ BlastoutAnalyze.pm --mode=import_map -if t/data/hs3.phmap_names -d hs_plus -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+
+ # options from config
+ BlastoutAnalyze.pm --mode=import_map -if t/data/hs3.phmap_names -d hs_plus -v
+
+Removes header from map file and writes columns (prot_id, phylostrata, ti, psname) to tmp file and imports that file into MySQL (needs MySQL connection parameters to connect to MySQL).
+
+
+
 
 
 =back
 
 =head1 CONFIGURATION
 
-All configuration in set in barebones.cnf that is found in ./lib directory (it can also be set with --config option on command line). It follows L<< Config::Std|https://metacpan.org/pod/Config::Std >> format and rules.
+All configuration in set in blastoutanalyze.cnf that is found in ./lib directory (it can also be set with --config option on command line). It follows L<< Config::Std|https://metacpan.org/pod/Config::Std >> format and rules.
 Example:
 
  [General]

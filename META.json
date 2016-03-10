@@ -72,7 +72,7 @@
    "release_status" : "unstable",
    "resources" : {
       "repository" : {
-         "url" : "https://bitbucket.org/mocnii/blastoutanalyze.git"
+         "url" : "https://mocnii@bitbucket.org/mocnii/blastoutanalyze.git"
       }
    },
    "version" : "0.01",
