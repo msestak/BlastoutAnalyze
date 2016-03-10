@@ -122,32 +122,58 @@ sub get_parameters_from_cmd {
 
 	#read config to setup defaults
 	read_config($config_file => my %config);
-	#print 'config:', Dumper(\%config);
+	#p(%config);
+	my $config_ps_href = $config{PS};
+	#p($config_ps_href);
+	my $config_ti_href = $config{TI};
+	#p($config_ti_href);
+	my $config_psname_href = $config{PSNAME};
+
 	#push all options into one hash no matter the section
 	my %opts;
 	foreach my $key (keys %config) {
+		# don't expand PS, TI or PSNAME
+		next if ( ($key eq 'PS') or ($key eq 'TI') or ($key eq 'PSNAME') );
+		# expand all other options
 		%opts = (%opts, %{ $config{$key} });
 	}
+
 	# put config location to %opts
 	$opts{config} = $config_file;
-	#say 'opts:', Dumper(\%opts);
+
+	# put PS and TI section to %opts
+	$opts{ps} = $config_ps_href;
+	$opts{ti} = $config_ti_href;
+	$opts{psname} = $config_psname_href;
 
 	#cli part
 	my @arg_copy = @ARGV;
 	my (%cli, @mode);
-	$cli{argv} = \@arg_copy;
 	$cli{quiet} = 0;
 	$cli{verbose} = 0;
+	$cli{argv} = \@arg_copy;
 
 	#mode, quiet and verbose can only be set on command line
     GetOptions(
         'help|h'        => \$cli{help},
         'man|m'         => \$cli{man},
-		'config|cnf=s'  => \$cli{config},
+        'config|cnf=s'  => \$cli{config},
         'in|i=s'        => \$cli{in},
         'infile|if=s'   => \$cli{infile},
         'out|o=s'       => \$cli{out},
         'outfile|of=s'  => \$cli{outfile},
+
+        'term_sub_name|ts=s' => \$cli{term_sub_name},
+        'map_sub_name|ms=s'  => \$cli{map_sub_name},
+        'expr_file=s'        => \$cli{expr_file},
+        'column_list|cl=s'   => \$cli{column_list},
+
+        'relation|r=s'  => \$cli{relation},
+        'nodes|no=s'    => \$cli{nodes},
+        'names|na=s'    => \$cli{names},
+        'max_process|max=i'=> \$cli{max_process},
+        'e_value|e=s'   => \$cli{e_value},
+        'tax_id|ti=i'   => \$cli{tax_id},
 
         'host|ho=s'      => \$cli{host},
         'database|d=s'  => \$cli{database},
@@ -233,7 +259,6 @@ sub get_parameters_from_cmd {
 
     return ( \%all_opts );
 }
-
 
 ### INTERNAL UTILITY ###
 # Usage      : init_logging();
@@ -896,10 +921,31 @@ sub import_blastdb_stats {
 			#import to stats_ps_tbl
 			my (undef, $ps, $num_of_genomes, $ti, ) = split "\t", $_;
 			$sth->execute($ps, $num_of_genomes, $ti);
+
+
+
 		}
 		# else normal genome in phylostrata line
 		else {
 			my ($ps2, $psti, $num_of_genes, $ti2) = split "\t", $_;
+
+			# update phylostrata with new phylostrata (shorter phylogeny)
+			my $ps_new2;
+			if ( exists $param_href->{ps}->{$ps2} ) {
+				$ps_new2 = $param_href->{ps}->{$ps2};
+				say "LINE:$.\tPS_INFILE:$ps2\tPS_NEW:$ps_new2";
+				$ps2 = $ps_new2;
+			}
+
+			# update psti with new tax_id (shorter phylogeny)
+			my $psti_new;
+			if ( exists $param_href->{ti}->{$psti} ) {
+				$psti_new = $param_href->{ti}->{$psti};
+				#say "LINE:$.\tTI_INFILE:$psti\tTI_NEW:$psti_new";
+				$psti = $psti_new;
+			}
+
+			# print to file
 			say {$tmp_fh} "$ps2\t$psti\t$num_of_genes\t$ti2";
 		}
 	}   # end while reading stats file
