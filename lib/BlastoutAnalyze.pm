@@ -33,6 +33,7 @@ our @EXPORT_OK = qw{
   blastout_analyze
   import_blastout
   import_map
+  import_blastdb_stats
 
 };
 
@@ -79,6 +80,7 @@ sub run {
         blastout_analyze    => \&blastout_analyze,       # analyze BLAST output and extract prot_id => ti information
         import_blastout     => \&import_blastout,        # import BLAST output
         import_map          => \&import_map,             # import Phylostratigraphic map with header
+		import_blastdb_stats => \&import_blastdb_stats,  # import BLAST database stats file
 
     );
 
@@ -818,11 +820,112 @@ sub import_map {
 	$log->debug( "Action: table $map_tbl inserted $rows rows!" ) unless $@;
 
 	# unlink tmp map file
-	unlink $temp_map and $log->trace("Action: $temp_map unlinked");
+	unlink $temp_map and $log->warn("Action: $temp_map unlinked");
 
-    return $map_tbl;
+    return;
 }
 
+
+### INTERFACE SUB ###
+# Usage      : --mode=import_blastdb_stats
+# Purpose    : import BLAST db stats created by AnalyzePhyloDb
+# Returns    : nothing
+# Parameters : infile and connection paramaters
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : 
+sub import_blastdb_stats {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('import_blastdb_stats() needs a $param_href') unless @_ == 1;
+    my ($param_href) = @_;
+
+    my $infile = $param_href->{infile} or $log->logcroak('no $infile specified on command line!');
+	my $stats_ps_tbl = path($infile)->basename;
+	$stats_ps_tbl   .= '_stats_ps';
+	my $stats_genomes_tbl = path($infile)->basename;
+	$stats_genomes_tbl   .='_stats_genomes';
+
+	my $dbh = _dbi_connect($param_href);
+
+    # create ps summary table
+    my $ps_summary = sprintf( qq{
+	CREATE TABLE %s (
+	phylostrata TINYINT UNSIGNED NOT NULL,
+	num_of_genomes INT UNSIGNED NOT NULL,
+	ti INT UNSIGNED NOT NULL,
+	PRIMARY KEY(phylostrata),
+	KEY(ti),
+	KEY(num_of_genomes)
+    ) }, $dbh->quote_identifier($stats_ps_tbl) );
+	_create_table( { table_name => $stats_ps_tbl, dbh => $dbh, query => $ps_summary } );
+	$log->trace("Report: $ps_summary");
+
+	# create genomes per phylostrata table
+    my $genomes_per_ps = sprintf( qq{
+	CREATE TABLE %s (
+	phylostrata TINYINT UNSIGNED NOT NULL,
+	psti INT UNSIGNED NOT NULL,
+	num_of_genes INT UNSIGNED NOT NULL,
+	ti INT UNSIGNED NOT NULL,
+	PRIMARY KEY(ti),
+	KEY(phylostrata),
+	KEY(num_of_genes)
+    ) }, $dbh->quote_identifier($stats_genomes_tbl) );
+	_create_table( { table_name => $stats_genomes_tbl, dbh => $dbh, query => $genomes_per_ps } );
+	$log->trace("Report: $genomes_per_ps");
+
+	# create tmp file for genomes part of stats file
+	my $temp_stats = path(path($infile)->parent, $stats_genomes_tbl);
+	open (my $tmp_fh, ">", $temp_stats) or $log->logdie("Error: can't open map $temp_stats for writing:$!");
+
+	# prepare statement handle to insert ps lines
+	my $insert_ps = sprintf( qq{
+	INSERT INTO %s (phylostrata, num_of_genomes, ti)
+	VALUES (?, ?, ?)
+	}, $dbh->quote_identifier($stats_ps_tbl) );
+	my $sth = $dbh->prepare($insert_ps);
+	$log->trace("Report: $insert_ps");
+
+	# need to skip header
+	open (my $stats_fh, "<", $infile) or $log->logdie("Error: can't open map $infile for reading:$!");
+	while (<$stats_fh>) {
+		chomp;
+
+		# if ps then summary line
+		if (m/ps/) {
+			#import to stats_ps_tbl
+			my (undef, $ps, $num_of_genomes, $ti, ) = split "\t", $_;
+			$sth->execute($ps, $num_of_genomes, $ti);
+		}
+		# else normal genome in phylostrata line
+		else {
+			my ($ps2, $psti, $num_of_genes, $ti2) = split "\t", $_;
+			say {$tmp_fh} "$ps2\t$psti\t$num_of_genes\t$ti2";
+		}
+	}   # end while reading stats file
+
+	# explicit close needed else it can break
+	close $tmp_fh;
+	$sth->finish;
+
+	# load genomes per phylostrata
+    my $load_query = qq{
+    LOAD DATA INFILE '$temp_stats'
+    INTO TABLE $stats_genomes_tbl } . q{ FIELDS TERMINATED BY '\t'
+    LINES TERMINATED BY '\n'
+    };
+	$log->trace("Report: $load_query");
+	my $rows;
+    eval { $rows = $dbh->do( $load_query ) };
+	$log->error( "Action: loading into table $stats_genomes_tbl failed: $@" ) if $@;
+	$log->debug( "Action: table $stats_genomes_tbl inserted $rows rows!" ) unless $@;
+
+	# unlink tmp map file
+	unlink $temp_stats and $log->warn("Action: $temp_stats unlinked");
+	$dbh->disconnect;
+
+    return;
+}
 
 
 
@@ -896,6 +999,17 @@ Extracts columns (prot_id, ti, pgi, e_value with no duplicates), writes them to 
  BlastoutAnalyze.pm --mode=import_map -if t/data/hs3.phmap_names -d hs_plus -v
 
 Removes header from map file and writes columns (prot_id, phylostrata, ti, psname) to tmp file and imports that file into MySQL (needs MySQL connection parameters to connect to MySQL).
+
+=item import_blastdb_stats
+
+ # options from command line
+ BlastoutAnalyze.pm --mode=import_blastdb_stats -if t/data/analyze_hs_9606_cdhit_large_extracted  -d hs_plus -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+
+ # options from config
+ BlastoutAnalyze.pm --mode=import_blastdb_stats -if t/data/analyze_hs_9606_cdhit_large_extracted  -d hs_plus -v
+
+Imports analyze stats file created by AnalyzePhyloDb.
+  AnalysePhyloDb -n /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dmp.fmt.new.sync -d /home/msestak/dropbox/Databases/db_02_09_2015/data/cdhit_large/extracted/ -t 9606 > analyze_hs_9606_cdhit_large_extracted
 
 
 
