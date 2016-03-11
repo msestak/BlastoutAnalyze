@@ -36,6 +36,7 @@ our @EXPORT_OK = qw{
   import_blastdb_stats
   import_names
   analyze_blastout
+  report_per_ps
 
 };
 
@@ -85,6 +86,7 @@ sub run {
 		import_blastdb_stats => \&import_blastdb_stats,   # import BLAST database stats file
 		import_names         => \&import_names,           # import names file
 		analyze_blastout     => \&analyze_blastout,       # analyzes BLAST output file using mapn names and blastout tables
+		report_per_ps        => \&report_per_ps,          # make a report of previous analysis (BLAST hits per phylostratum)
 
     );
 
@@ -1153,6 +1155,7 @@ sub analyze_blastout {
 	# to insert blastout_analysis and blastout_analysis_all table
 	_insert_blastout_analysis( { dbh => $dbh, phylostrata => \@ps, %{$p_href} } );
 	
+    $dbh->disconnect;
     return;
 }
 
@@ -1211,9 +1214,92 @@ sub _insert_blastout_analysis {
 	    $log->debug( qq{Action: table $p_href->{blastout_analysis} for ps:$ps inserted $rows rows} ) unless $@;
 	}
 
+    return;
+}
+
+
+### INTERFACE SUB ###
+# Usage      : --mode=report_per_ps
+# Purpose    : reports blast output analysis per species (ti) per phylostrata
+# Returns    : nothing
+# Parameters : 
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : 
+sub report_per_ps {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('report_per_ps() needs a $p_href') unless @_ == 1;
+    my ($p_href) = @_;
+
+    my $out = $p_href->{out} or $log->logcroak('no $out specified on command line!');
+    my $dbh = _dbi_connect($p_href);
+
+	# name the report_per_ps table
+	my $report_per_ps_tbl = "$p_href->{blastout}_report_per_ps";
+
+	# create summary per phylostrata per species
+    my $report_per_ps = sprintf( qq{
+    CREATE TABLE %s (
+	id INT UNSIGNED AUTO_INCREMENT NOT NULL,
+	ps TINYINT UNSIGNED NOT NULL,
+	species_name VARCHAR(200) NULL,
+	gene_hits_per_species INT UNSIGNED NOT NULL,
+	gene_list MEDIUMTEXT NOT NULL,
+	PRIMARY KEY(id),
+	KEY(species_name)
+	)}, $dbh->quote_identifier($report_per_ps_tbl) );
+	_create_table( { table_name => $report_per_ps_tbl, dbh => $dbh, query => $report_per_ps } );
+	$log->trace("Report: $report_per_ps");
+
+	#for large GROUP_CONCAT selects
+	my $value = 16_777_215;
+	my $variables_query = qq{
+	SET SESSION group_concat_max_len = $value
+	};
+	eval { $dbh->do($variables_query) };
+    $log->error( "Error: changing SESSION group_concat_max_len=$value failed: $@" ) if $@;
+    $log->debug( "Report: changing SESSION group_concat_max_len=$value succeeded" ) unless $@;
+
+	# create insert query
+	my $insert_report_per_ps = sprintf( qq{
+		INSERT INTO %s (ps, species_name, gene_hits_per_species, gene_list)
+		SELECT ps, species_name, COUNT(species_name) AS gene_hits_per_species, 
+		GROUP_CONCAT(prot_id ORDER BY prot_id) AS gene_list
+		FROM %s
+		GROUP BY species_name
+		ORDER BY ps, gene_hits_per_species, species_name
+	}, $dbh->quote_identifier($report_per_ps_tbl), $dbh->quote_identifier($p_href->{blastout_analysis}) );
+	my $rows;
+	eval { $rows = $dbh->do($insert_report_per_ps) };
+    $log->error( "Error: inserting into $report_per_ps_tbl failed: $@" ) if $@;
+    $log->debug( "Action: table $report_per_ps_tbl inserted $rows rows" ) unless $@;
+
+	#export to tsv file
+	my $out_report_per_ps = path($out, $report_per_ps_tbl);
+	if (-f $out_report_per_ps ) {
+		unlink $out_report_per_ps and $log->warn( "Warn: file $out_report_per_ps found and unlinked" );
+	}
+	else {
+		$log->trace( "Action: file $out_report_per_ps will be created by SELECT INTO OUTFILE" );
+	}
+	my $export_report_per_ps = qq{
+		SELECT * FROM $report_per_ps_tbl
+		INTO OUTFILE '$out_report_per_ps' } 
+		. q{
+		FIELDS TERMINATED BY '\t'
+		LINES TERMINATED BY '\n';
+	};
+
+	my $r_ex;
+    eval { $r_ex = $dbh->do($export_report_per_ps) };
+    $log->error( "Error: exporting $report_per_ps_tbl to $out_report_per_ps failed: $@" ) if $@;
+    $log->debug( "Action: table $report_per_ps_tbl exported $r_ex rows to $out_report_per_ps" ) unless $@;
+
+    $dbh->disconnect;
 
     return;
 }
+
 
 
 1;
@@ -1314,6 +1400,20 @@ Imports names file (columns ti, species_name) into MySQL.
  BlastoutAnalyze.pm --mode=analyze_blastout -d hs_plus -v
 
 Runs BLAST output analysis - expanding every prot_id to its tax_id hits and species names. It creates 2 table: one with all tax_ids fora each gene, and one with tax_ids only that are for phylostratum of interest.
+
+
+=item report_per_ps
+
+ # options from command line
+ lib/BlastoutAnalyze.pm --mode=report_per_ps -o t/data/ -d hs_plus -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+
+ # options from config
+ lib/BlastoutAnalyze.pm --mode=report_per_ps -o t/data/ -d hs_plus -v
+
+Runs summary per phylostrata per species of BLAST output analysis.
+
+
+
 
 =back
 

@@ -89,6 +89,16 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
 
     Runs BLAST output analysis - expanding every prot\_id to its tax\_id hits and species names. It creates 2 table: one with all tax\_ids fora each gene, and one with tax\_ids only that are for phylostratum of interest.
 
+- report\_per\_ps
+
+        # options from command line
+        lib/BlastoutAnalyze.pm --mode=report_per_ps -o t/data/ -d hs_plus -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+
+        # options from config
+        lib/BlastoutAnalyze.pm --mode=report_per_ps -o t/data/ -d hs_plus -v
+
+    Runs summary per phylostrata per species of BLAST output analysis.
+
 # CONFIGURATION
 
 All configuration in set in blastoutanalyze.cnf that is found in ./lib directory (it can also be set with --config option on command line). It follows [Config::Std](https://metacpan.org/pod/Config::Std) format and rules.
