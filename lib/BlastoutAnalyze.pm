@@ -35,6 +35,7 @@ our @EXPORT_OK = qw{
   import_map
   import_blastdb_stats
   import_names
+  analyze_blastout
 
 };
 
@@ -81,8 +82,9 @@ sub run {
         blastout_analyze     => \&blastout_analyze,       # analyze BLAST output and extract prot_id => ti information
         import_blastout      => \&import_blastout,        # import BLAST output
         import_map           => \&import_map,             # import Phylostratigraphic map with header
-		import_blastdb_stats => \&import_blastdb_stats,  # import BLAST database stats file
-		import_names         => \&import_names,          # import names file
+		import_blastdb_stats => \&import_blastdb_stats,   # import BLAST database stats file
+		import_names         => \&import_names,           # import names file
+		analyze_blastout     => \&analyze_blastout,       # analyzes BLAST output file using mapn names and blastout tables
 
     );
 
@@ -165,16 +167,12 @@ sub get_parameters_from_cmd {
         'out|o=s'       => \$cli{out},
         'outfile|of=s'  => \$cli{outfile},
 
-        'term_sub_name|ts=s' => \$cli{term_sub_name},
-        'map_sub_name|ms=s'  => \$cli{map_sub_name},
-        'expr_file=s'        => \$cli{expr_file},
-        'column_list|cl=s'   => \$cli{column_list},
-
-        'relation|r=s'  => \$cli{relation},
         'nodes|no=s'    => \$cli{nodes},
         'names|na=s'    => \$cli{names},
-        'max_process|max=i'=> \$cli{max_process},
-        'e_value|e=s'   => \$cli{e_value},
+		'blastout=s'    => \$cli{blastout},
+		'map=s'         => \$cli{map},
+		'analyze_ps=s'  => \$cli{analyze_ps},
+		'analyze_genomes=s' => \$cli{analyze_genomes},
         'tax_id|ti=i'   => \$cli{tax_id},
 
         'host|ho=s'      => \$cli{host},
@@ -1097,9 +1095,125 @@ sub import_names {
 }
 
 
+### INTERFACE SUB ###
+# Usage      : --mode=analyze_blastout
+# Purpose    : is to create expanded table per phylostrata with ps, prot_id, ti, species_name
+# Returns    : nothing
+# Parameters : 
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : 
+sub analyze_blastout {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('analyze_blastout() needs a $param_href') unless @_ == 1;
+    my ($p_href) = @_;
+
+    # get new handle
+    my $dbh = _dbi_connect($p_href);
+
+    # create blastout_analysis table
+    my $blastout_analysis = sprintf( qq{
+    CREATE TABLE %s (
+	id INT UNSIGNED AUTO_INCREMENT NOT NULL,
+	ps TINYINT UNSIGNED NOT NULL,
+	prot_id VARCHAR(40) NOT NULL,
+	ti INT UNSIGNED NOT NULL,
+	species_name VARCHAR(200) NULL,
+	PRIMARY KEY(id),
+	KEY(ti),
+	KEY(prot_id)
+	)}, $dbh->quote_identifier($p_href->{blastout_analysis}) );
+	_create_table( { table_name => $p_href->{blastout_analysis}, dbh => $dbh, query => $blastout_analysis } );
+	$log->trace("Report: $blastout_analysis");
+
+	# create blastout_analysis_all table
+    my $blastout_analysis_all = sprintf( qq{
+    CREATE TABLE %s (
+	id INT UNSIGNED AUTO_INCREMENT NOT NULL,
+	ps TINYINT UNSIGNED NOT NULL,
+	prot_id VARCHAR(40) NOT NULL,
+	ti INT UNSIGNED NOT NULL,
+	species_name VARCHAR(200) NULL,
+	PRIMARY KEY(id),
+	KEY(ti),
+	KEY(prot_id)
+	)}, $dbh->quote_identifier("$p_href->{blastout_analysis}_all") );
+	_create_table( { table_name => "$p_href->{blastout_analysis}_all", dbh => $dbh, query => $blastout_analysis_all } );
+	$log->trace("Report: $blastout_analysis_all");
+
+    # get columns from MAP table to iterate on phylostrata
+	my $select_ps_from_map = sprintf( qq{
+	SELECT DISTINCT phylostrata FROM %s ORDER BY phylostrata
+	}, $dbh->quote_identifier($p_href->{map}) );
+	
+	# get column phylostrata to array to iterate insert query on them
+	my @ps = map { $_->[0] } @{ $dbh->selectall_arrayref($select_ps_from_map) };
+	$log->trace( 'Returned phylostrata: {', join('}{', @ps), '}' );
+	
+	# to insert blastout_analysis and blastout_analysis_all table
+	_insert_blastout_analysis( { dbh => $dbh, phylostrata => \@ps, %{$p_href} } );
+	
+    return;
+}
 
 
+### INTERNAL UTILITY ###
+# Usage      : _insert_blastout_analysis( { dbh => $dbh, pphylostrata => \@ps, %{$p_href} } );
+# Purpose    : to insert blastout_analysis and blastout_analysis_all table
+# Returns    : nothing
+# Parameters : 
+# Throws     : croaks if wrong number of parameters
+# Comments   : part of --mode=blastout_analyze
+# See Also   : 
+sub _insert_blastout_analysis {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_insert_blastout_analysis() needs a $param_href') unless @_ == 1;
+    my ($p_href) = @_;
 
+	# create insert query for each phylostratum (blastout_analysis_all table)
+	my $insert_ps_query_all = qq{
+	INSERT INTO $p_href->{blastout_analysis}_all (ps, prot_id, ti, species_name)
+		SELECT DISTINCT map.phylostrata, map.prot_id, blout.ti, na.species_name
+		FROM $p_href->{blastout} AS blout
+		INNER JOIN $p_href->{map} AS map ON blout.prot_id = map.prot_id
+		INNER JOIN $p_href->{names} AS na ON blout.ti = na.ti
+		WHERE map.phylostrata = ?
+	};
+	my $sth_all = $p_href->{dbh}->prepare($insert_ps_query_all);
+	$log->trace("Report: $insert_ps_query_all");
+	
+	#iterate for each phylostratum and insert into blastout_analysis_all
+	foreach my $ps (@{ $p_href->{phylostrata} }) {
+	    eval { $sth_all->execute($ps) };
+		my $rows = $sth_all->rows;
+	    $log->error( qq{Error: inserting into "$p_href->{blastout_analysis}_all" failed for ps:$ps: $@} ) if $@;
+	    $log->debug( qq{Action: table "$p_href->{blastout_analysis}_all" for ps:$ps inserted $rows rows} ) unless $@;
+	}
+
+	# create insert query for each phylostratum (blastout_analysis table)
+	my $insert_ps_query = qq{
+	INSERT INTO $p_href->{blastout_analysis} (ps, prot_id, ti, species_name)
+		SELECT DISTINCT map.phylostrata, map.prot_id, blout.ti, na.species_name
+		FROM $p_href->{blastout} AS blout
+		INNER JOIN $p_href->{map} AS map ON blout.prot_id = map.prot_id
+		INNER JOIN $p_href->{names} AS na ON blout.ti = na.ti
+		INNER JOIN $p_href->{analyze_genomes} AS an ON blout.ti = an.ti
+		WHERE map.phylostrata = ? AND an.phylostrata = ?
+	};
+	my $sth = $p_href->{dbh}->prepare($insert_ps_query);
+	$log->trace("Report: $insert_ps_query");
+	
+	#iterate for each phylostratum and insert into blastout_analysis
+	foreach my $ps (@{ $p_href->{phylostrata} }) {
+	    eval { $sth->execute($ps, $ps) };
+	    my $rows = $sth->rows;
+	    $log->error( qq{Error: inserting into $p_href->{blastout_analysis} failed for ps:$ps: $@} ) if $@;
+	    $log->debug( qq{Action: table $p_href->{blastout_analysis} for ps:$ps inserted $rows rows} ) unless $@;
+	}
+
+
+    return;
+}
 
 
 1;
@@ -1181,8 +1295,25 @@ Imports analyze stats file created by AnalyzePhyloDb.
   AnalysePhyloDb -n /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dmp.fmt.new.sync -d /home/msestak/dropbox/Databases/db_02_09_2015/data/cdhit_large/extracted/ -t 9606 > analyze_hs_9606_cdhit_large_extracted
 It can use PS and TI config sections.
 
+=item import_names
 
+ # options from command line
+ BlastoutAnalyze.pm --mode=import_names -if t/data/names.dmp.fmt.new  -d hs_plus -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
 
+ # options from config
+ BlastoutAnalyze.pm --mode=import_names -if t/data/names.dmp.fmt.new  -d hs_plus -v
+
+Imports names file (columns ti, species_name) into MySQL.
+
+=item analyze_blastout
+
+ # options from command line
+ BlastoutAnalyze.pm --mode=analyze_blastout -d hs_plus -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+
+ # options from config
+ BlastoutAnalyze.pm --mode=analyze_blastout -d hs_plus -v
+
+Runs BLAST output analysis - expanding every prot_id to its tax_id hits and species names. It creates 2 table: one with all tax_ids fora each gene, and one with tax_ids only that are for phylostratum of interest.
 
 =back
 
@@ -1213,9 +1344,75 @@ Copyright (C) Martin Sebastijan Šestak.
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself.
 
+=head1 EXAMPLE
+
+ [msestak@tiktaalik blastoutanalyze]$ lib/BlastoutAnalyze.pm --mode=import_blastout -if /home/msestak/prepare_blast/out/hs_plus/hs_all_plus_21_12_2015 -o t/data/ -d hs_plus
+ My input file: /home/msestak/prepare_blast/out/hs_plus/hs_all_plus_21_12_2015
+ My absolute input file: /home/msestak/prepare_blast/out/hs_plus/hs_all_plus_21_12_2015
+ My output path: t/data
+ My absolute output path: /home/msestak/gitdir/blastoutanalyze/t/data
+ \ {
+     argv       [
+         [0] "--mode=import_blastout",
+         [1] "-if",
+         [2] "/home/msestak/prepare_blast/out/hs_plus/hs_all_plus_21_12_2015",
+         [3] "-o",
+         [4] "t/data/",
+         [5] "-d",
+         [6] "hs_plus",
+         [7] "-v",
+         [8] "-v"
+     ],
+     charset    "ascii",
+     config     "/home/msestak/gitdir/blastoutanalyze/lib/blastoutanalyze.cnf",
+     database   "hs_plus",
+     host       "localhost",
+     infile     "/home/msestak/prepare_blast/out/hs_plus/hs_all_plus_21_12_2015",
+     mode       [
+         [0] "import_blastout"
+     ],
+     out        "/home/msestak/gitdir/blastoutanalyze/t/data",
+     password   "msandbox",
+     port       5625,
+     quiet      0,
+     socket     "/tmp/mysql_sandbox5625.sock",
+     user       "msandbox",
+     verbose    2
+ }
+ [2016/03/10 14:38:00,545] INFO> BlastoutAnalyze::_extract_blastout line:681==>Report: started processing of /home/msestak/prepare_blast/out/hs_plus/hs_all_plus_21_12_2015
+ [2016/03/10 14:38:09,017]TRACE> BlastoutAnalyze::_extract_blastout line:701==>1000000 lines processed!
+ ...
+ [2016/03/10 17:24:50,134]TRACE> BlastoutAnalyze::_extract_blastout line:701==>1152000000 lines processed!
+ [2016/03/10 17:24:53,210] INFO> BlastoutAnalyze::_extract_blastout line:707==>Report: file /home/msestak/gitdir/blastoutanalyze/t/data/hs_all_plus_21_12_2015_formated printed successfully with 503859793 lines (from 1152339698 original lines)
+ [2016/03/10 17:24:53,215]TRACE> BlastoutAnalyze::_create_table line:458==>Action: hs_all_plus_21_12_2015 dropped successfully!
+ [2016/03/10 17:24:53,229]TRACE> BlastoutAnalyze::_create_table line:462==>Action: hs_all_plus_21_12_2015 created successfully!
+ [2016/03/10 17:24:53,229]TRACE> BlastoutAnalyze::_dbi_connect line:429==>Report: connected to DBI:mysql:database=hs_plus;host=localhost;port=5625;mysql_socket=/tmp/mysql_sandbox5625.sock;mysql_server_prepare=1;mysql_use_result=0 by dbh DBI::db=HASH(0x1b024d8)
+ [2016/03/10 17:24:53,231]TRACE> BlastoutAnalyze::import_blastout line:611==>Time running:0.001 sec      STATE:System lock
+ [2016/03/10 17:25:03,232]TRACE> BlastoutAnalyze::import_blastout line:611==>Time running:10.002 sec     STATE:Fetched about 7730000 rows, loading data still remains
+ ...
+ [2016/03/10 17:47:53,470]TRACE> BlastoutAnalyze::import_blastout line:611==>Time running:1380.240 sec   STATE:Fetched about 503859000 rows, loading data still remains
+ [2016/03/10 17:48:03,472]TRACE> BlastoutAnalyze::import_blastout line:611==>Time running:1390.242 sec   STATE:Loading of data about 1.9% done
+ ...
+ [2016/03/10 17:54:23,541]TRACE> BlastoutAnalyze::import_blastout line:611==>Time running:1770.311 sec   STATE:Loading of data about 97.9% done
+ [2016/03/10 17:54:33,544]TRACE> BlastoutAnalyze::import_blastout line:611==>Time running:1780.313 sec   STATE:Verifying index uniqueness: Checked 20000 of 0 rows in key-PRIMA
+ ...
+ [2016/03/10 19:19:04,335]TRACE> BlastoutAnalyze::import_blastout line:611==>Time running:6851.105 sec   STATE:Verifying index uniqueness: Checked 503780000 of 0 rows in key-P
+ [2016/03/10 19:19:14,336] INFO> BlastoutAnalyze::import_blastout line:617==>Action: import inserted 503859793 rows!
+ [2016/03/10 19:19:14,337]TRACE> BlastoutAnalyze::_dbi_connect line:429==>Report: connected to DBI:mysql:database=hs_plus;host=localhost;port=5625;mysql_socket=/tmp/mysql_sandbox5625.sock;mysql_server_prepare=1;mysql_use_result=0 by dbh DBI::db=HASH(0x1afa9c8)
+ [2016/03/10 19:19:14,340]TRACE> BlastoutAnalyze::import_blastout line:640==>Time running:0.002 sec      STATE:init
+ [2016/03/10 19:19:24,341]TRACE> BlastoutAnalyze::import_blastout line:640==>Time running:10.004 sec     STATE:Adding indexes: Fetched 40143000 of about 503859793 rows, loadin
+ ...
+ [2016/03/10 19:34:24,496]TRACE> BlastoutAnalyze::import_blastout line:640==>Time running:910.159 sec    STATE:Adding indexes: Fetched 503859000 of about 503859793 rows, loadi
+ [2016/03/10 19:34:34,497]TRACE> BlastoutAnalyze::import_blastout line:640==>Time running:920.160 sec    STATE:Loading of data about 0.8% done
+ ...
+ [2016/03/10 19:40:44,596]TRACE> BlastoutAnalyze::import_blastout line:640==>Time running:1290.258 sec   STATE:Loading of data about 98.9% done
+ [2016/03/10 19:40:54,596] INFO> BlastoutAnalyze::import_blastout line:647==>Action: Index tix on hs_all_plus_21_12_2015 added successfully!
+ [2016/03/10 19:40:59,627] WARN> BlastoutAnalyze::import_blastout line:650==>File /home/msestak/gitdir/blastoutanalyze/t/data/hs_all_plus_21_12_2015_formated unlinked!
+ [2016/03/10 19:40:59,628] INFO> BlastoutAnalyze::run line:89==>TIME when finished for: import_blastout
+
 =head1 AUTHOR
 
-Martin Sebastijan Šestak
-mocnii E<lt>msestak@irb.hrE<gt>
+Martin Sebastijan Šestak mocnii E<lt>msestak@irb.hrE<gt>
+
 
 =cut

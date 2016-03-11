@@ -13,6 +13,14 @@ port     = 5625
 socket   = /tmp/mysql_sandbox5625.sock
 charset  = ascii
 
+[Tables]
+names           = names_dmp_fmt_new
+blastout        = hs_all_plus_21_12_2015
+blastout_analysis = hs_all_plus_21_12_2015_analysis
+map             = hs3_map
+analyze_ps      = analyze_hs_9606_cdhit_large_extracted_stats_ps
+analyze_genomes = analyze_hs_9606_cdhit_large_extracted_stats_genomes
+
 [PS]
 1   =  1
 2   =  2
