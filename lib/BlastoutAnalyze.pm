@@ -37,6 +37,7 @@ our @EXPORT_OK = qw{
   import_names
   analyze_blastout
   report_per_ps
+  exclude_ti_from_blastout
 
 };
 
@@ -87,6 +88,7 @@ sub run {
 		import_names         => \&import_names,           # import names file
 		analyze_blastout     => \&analyze_blastout,       # analyzes BLAST output file using mapn names and blastout tables
 		report_per_ps        => \&report_per_ps,          # make a report of previous analysis (BLAST hits per phylostratum)
+		exclude_ti_from_blastout => \&exclude_ti_from_blastout,   # excludes specific tax_id from BLAST output file
 
     );
 
@@ -1298,6 +1300,69 @@ sub report_per_ps {
     $log->debug( "Action: table $report_per_ps_tbl exported $r_ex rows to $out_report_per_ps" ) unless $@;
 
     $dbh->disconnect;
+
+    return;
+}
+
+### INTERFACE SUB ###
+# Usage      : --mode=exclude_ti_from_blastout();
+# Purpose    : excludes tax_id from blastout file and saves new file to disk
+# Returns    : nothing
+# Parameters : ($param_href)
+# Throws     : croaks for parameters
+# Comments   : 
+# See Also   : 
+sub exclude_ti_from_blastout {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak( 'exclude_ti_from_blastout() needs a hash_ref' ) unless @_ == 1;
+    my ($param_href) = @_;
+
+    my $infile   = $param_href->{infile} or $log->logcroak( 'no $infile specified on command line!' );
+    my $tax_id   = $param_href->{tax_id} or $log->logcroak( 'no $tax_id specified on command line!' );
+    my $blastout = path($infile)->basename;
+    my $blastout_good = path(path($infile)->parent, $blastout . "_good");
+	my $blastout_bad  = path(path($infile)->parent, $blastout . "_bad");
+    
+    open( my $blastout_fh,      "< :encoding(ASCII)", $infile )        or $log->logdie( "Blastout file $infile not found:$!" );
+    open( my $blastout_good_fh, "> :encoding(ASCII)", $blastout_good ) or $log->logdie( "good output $blastout_good:$!" );
+    open( my $blastout_bad_fh,  "> :encoding(ASCII)", $blastout_bad )  or $log->logdie( "bad output $blastout_bad:$!" );
+
+
+    #in blastout
+    #ENSG00000151914|ENSP00000354508    pgi|34252924|ti|9606|pi|0|  100.00  7461    0   0   1   7461    1   7461    0.0 1.437e+04
+    
+    local $.;
+	my $i_good = 0;
+	my $i_bad  = 0;
+    while ( <$blastout_fh> ) {
+        chomp;
+        my (undef, $id, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef) = split "\t" , $_;
+		my ($ti) = $id =~ m{pgi\|(?:\d+)\|ti\|(\d+)\|pi.+};
+
+		#progress tracker
+        if ($. % 1000000 == 0) {
+            $log->trace( "$. lines processed!" );
+        }
+		
+		#if found bad id exclude from blastout
+		if ($ti == $tax_id) {
+			$i_bad++;
+			say {$blastout_bad_fh} $_;
+		}
+		else {
+			$i_good++;
+			say {$blastout_good_fh} $_;
+		}
+			
+    }
+	#give info about what you did
+    $log->info( "Report: file $blastout read successfully with $. lines" );
+    $log->info( "Report: file $blastout_good printed successfully with $i_good lines" );
+    $log->info( "Report: file $blastout_bad printed successfully with $i_bad lines" );
+
+	close $blastout_fh;
+	close $blastout_good_fh;
+	close $blastout_bad_fh;
 
     return;
 }
