@@ -136,6 +136,12 @@ Copyright (C) Martin Sebastijan Šestak.
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself.
 
+# AUTHOR
+
+Martin Sebastijan Šestak
+mocnii
+<msestak@irb.hr>
+
 # EXAMPLE
 
     [msestak@tiktaalik blastoutanalyze]$ lib/BlastoutAnalyze.pm --mode=import_blastout -if /home/msestak/prepare_blast/out/hs_plus/hs_all_plus_21_12_2015 -o t/data/ -d hs_plus
@@ -202,6 +208,33 @@ it under the same terms as Perl itself.
     [2016/03/10 19:40:59,627] WARN> BlastoutAnalyze::import_blastout line:650==>File /home/msestak/gitdir/blastoutanalyze/t/data/hs_all_plus_21_12_2015_formated unlinked!
     [2016/03/10 19:40:59,628] INFO> BlastoutAnalyze::run line:89==>TIME when finished for: import_blastout
 
-# AUTHOR
 
-Martin Sebastijan Šestak mocnii <msestak@irb.hr>
+    [msestak@tiktaalik blastoutanalyze]$ lib/BlastoutAnalyze.pm --mode=analyze_blastout -d hs_plus -v -v
+            INSERT INTO hs_all_plus_21_12_2015_analysis (ps, prot_id, ti, species_name)
+                    SELECT DISTINCT map.phylostrata, map.prot_id, blout.ti, na.species_name
+                    FROM hs_all_plus_21_12_2015 AS blout
+                    INNER JOIN hs3_map AS map ON blout.prot_id = map.prot_id
+                    INNER JOIN names_dmp_fmt_new AS na ON blout.ti = na.ti
+                    INNER JOIN analyze_hs_9606_cdhit_large_extracted_stats_genomes AS an ON blout.ti = an.ti
+                    WHERE map.phylostrata = ? AND an.phylostrata = ?
+    
+    [2016/03/11 21:43:13,672]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:1 inserted 10096682 rows
+    [2016/03/11 21:45:16,413]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:2 inserted 556843 rows
+    [2016/03/11 21:50:38,466]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:3 inserted 2787 rows
+    [2016/03/11 21:50:39,509]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:4 inserted 159 rows
+    [2016/03/11 21:50:42,059]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:5 inserted 1513 rows
+    [2016/03/11 21:50:44,008]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:6 inserted 746 rows
+    [2016/03/11 21:51:32,329]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:7 inserted 12815 rows
+    [2016/03/11 21:51:33,733]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:8 inserted 99 rows
+    [2016/03/11 21:51:35,690]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:9 inserted 73 rows
+    [2016/03/11 21:51:36,894]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:10 inserted 152 rows
+    [2016/03/11 21:51:38,362]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:11 inserted 1385 rows
+    [2016/03/11 21:52:10,068]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:12 inserted 3636 rows
+    [2016/03/11 21:52:13,249]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:13 inserted 200 rows
+    [2016/03/11 21:53:07,207]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:14 inserted 3136 rows
+    [2016/03/11 21:53:11,187]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:15 inserted 507 rows
+    [2016/03/11 21:53:21,882]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:16 inserted 1683 rows
+    [2016/03/11 21:54:12,288]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:17 inserted 541 rows
+    [2016/03/11 21:54:46,957]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:18 inserted 37 rows
+    [2016/03/11 21:55:23,685]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:19 inserted 1978 rows
+    [2016/03/11 21:55:23,685] INFO> BlastoutAnalyze::run line:97==>TIME when finished for: analyze_blastout
