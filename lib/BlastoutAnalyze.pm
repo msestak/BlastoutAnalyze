@@ -1242,6 +1242,7 @@ sub report_per_ps {
     CREATE TABLE %s (
 	id INT UNSIGNED AUTO_INCREMENT NOT NULL,
 	ps TINYINT UNSIGNED NOT NULL,
+	ti INT UNSIGNED NOT NULL,
 	species_name VARCHAR(200) NULL,
 	gene_hits_per_species INT UNSIGNED NOT NULL,
 	gene_list MEDIUMTEXT NOT NULL,
@@ -1262,8 +1263,8 @@ sub report_per_ps {
 
 	# create insert query
 	my $insert_report_per_ps = sprintf( qq{
-		INSERT INTO %s (ps, species_name, gene_hits_per_species, gene_list)
-		SELECT ps, species_name, COUNT(species_name) AS gene_hits_per_species, 
+		INSERT INTO %s (ps, ti, species_name, gene_hits_per_species, gene_list)
+		SELECT ps, ti, species_name, COUNT(species_name) AS gene_hits_per_species, 
 		GROUP_CONCAT(prot_id ORDER BY prot_id) AS gene_list
 		FROM %s
 		GROUP BY species_name
@@ -1273,6 +1274,7 @@ sub report_per_ps {
 	eval { $rows = $dbh->do($insert_report_per_ps) };
     $log->error( "Error: inserting into $report_per_ps_tbl failed: $@" ) if $@;
     $log->debug( "Action: table $report_per_ps_tbl inserted $rows rows" ) unless $@;
+	$log->trace("$insert_report_per_ps");
 
 	#export to tsv file
 	my $out_report_per_ps = path($out, $report_per_ps_tbl);
