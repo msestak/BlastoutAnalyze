@@ -1312,7 +1312,7 @@ sub report_per_ps {
 # Throws     : croaks for parameters
 # Comments   : 
 # See Also   : 
-sub exclude_ti_from_blastout {
+sub exclude_ti_from_blastout2 {
     my $log = Log::Log4perl::get_logger("main");
     $log->logcroak( 'exclude_ti_from_blastout() needs a hash_ref' ) unless @_ == 1;
     my ($param_href) = @_;
@@ -1337,7 +1337,7 @@ sub exclude_ti_from_blastout {
     while ( <$blastout_fh> ) {
         chomp;
         my (undef, $id, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef) = split "\t" , $_;
-		my ($ti) = $id =~ m{pgi\|(?:\d+)\|ti\|(\d+)\|pi.+};
+		my ($ti) = $id =~ m{\Apgi\|(?:\d+)\|ti\|(\d+)\|.+\z};   #pgi|0000000000042857453|ti|428574|pi|0|
 
 		#progress tracker
         if ($. % 1000000 == 0) {
@@ -1368,6 +1368,61 @@ sub exclude_ti_from_blastout {
 }
 
 
+sub exclude_ti_from_blastout {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak( 'exclude_ti_from_blastout() needs a hash_ref' ) unless @_ == 1;
+    my ($param_href) = @_;
+
+    my $infile   = $param_href->{infile} or $log->logcroak( 'no $infile specified on command line!' );
+    my $tax_id   = $param_href->{tax_id} or $log->logcroak( 'no $tax_id specified on command line!' );
+    my $blastout = path($infile)->basename;
+    my $blastout_good = path(path($infile)->parent, $blastout . "_good");
+	my $blastout_bad  = path(path($infile)->parent, $blastout . "_bad");
+    
+    open( my $blastout_fh,      "< :encoding(ASCII)", $infile )        or $log->logdie( "Blastout file $infile not found:$!" );
+    open( my $blastout_good_fh, "> :encoding(ASCII)", $blastout_good ) or $log->logdie( "good output $blastout_good:$!" );
+    open( my $blastout_bad_fh,  "> :encoding(ASCII)", $blastout_bad )  or $log->logdie( "bad output $blastout_bad:$!" );
+
+
+    #in blastout
+    #ENSG00000151914|ENSP00000354508    pgi|34252924|ti|9606|pi|0|  100.00  7461    0   0   1   7461    1   7461    0.0 1.437e+04
+    
+    local $.;
+	my $i_good = 0;
+	my $i_bad  = 0;
+    while ( <$blastout_fh> ) {
+        chomp;
+        my (undef, $id, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef) = split "\t", $_;
+		my (undef, undef, undef, $ti, undef, undef) = split(/\|/, $id);   #pgi|0000000000042857453|ti|428574|pi|0|
+		# any string that is not a single space (chr(32)) will implicitly be used as a regex, so split '|' will still be split /|/ and thus equal split //
+
+		#progress tracker
+        if ($. % 1000000 == 0) {
+            $log->trace( "$. lines processed!" );
+        }
+		
+		#if found bad id exclude from blastout
+		if ($ti == $tax_id) {
+			$i_bad++;
+			say {$blastout_bad_fh} $_;
+		}
+		else {
+			$i_good++;
+			say {$blastout_good_fh} $_;
+		}
+			
+    }
+	#give info about what you did
+    $log->info( "Report: file $blastout read successfully with $. lines" );
+    $log->info( "Report: file $blastout_good printed successfully with $i_good lines" );
+    $log->info( "Report: file $blastout_bad printed successfully with $i_bad lines" );
+
+	close $blastout_fh;
+	close $blastout_good_fh;
+	close $blastout_bad_fh;
+
+    return;
+}
 
 1;
 __END__
