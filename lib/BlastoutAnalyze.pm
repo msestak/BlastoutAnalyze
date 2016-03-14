@@ -1479,6 +1479,15 @@ Runs BLAST output analysis - expanding every prot_id to its tax_id hits and spec
 
 Runs summary per phylostrata per species of BLAST output analysis.
 
+=item exclude_ti_from_blastout
+
+ # options from command line
+ lib/BlastoutAnalyze.pm --mode=exclude_ti_from_blastout -if t/data/hs_all_plus_21_12_2015 -ti 428574 -v
+
+ # options from config
+ lib/BlastoutAnalyze.pm --mode=exclude_ti_from_blastout -if t/data/hs_all_plus_21_12_2015 -ti 428574 -v
+
+Removes specific hits from the BLAST output based on the specified tax_id (exclude bad genomes).
 
 
 

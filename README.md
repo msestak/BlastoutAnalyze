@@ -99,6 +99,16 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
 
     Runs summary per phylostrata per species of BLAST output analysis.
 
+- exclude\_ti\_from\_blastout
+
+        # options from command line
+        lib/BlastoutAnalyze.pm --mode=exclude_ti_from_blastout -if t/data/hs_all_plus_21_12_2015 -ti 428574 -v
+
+        # options from config
+        lib/BlastoutAnalyze.pm --mode=exclude_ti_from_blastout -if t/data/hs_all_plus_21_12_2015 -ti 428574 -v
+
+    Removes specific hits from the BLAST output based on the specified tax\_id (exclude bad genomes).
+
 # CONFIGURATION
 
 All configuration in set in blastoutanalyze.cnf that is found in ./lib directory (it can also be set with --config option on command line). It follows [Config::Std](https://metacpan.org/pod/Config::Std) format and rules.
