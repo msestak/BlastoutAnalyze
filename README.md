@@ -8,10 +8,22 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
     BlastoutAnalyze.pm --mode=create_db -d test_db_here
 
     # remove duplicates and import BLAST output file into MySQL database
-    BlastoutAnalyze.pm --mode=import_blastout -if t/data/sc_OUTplus100 -o t/data/ -d hs_plus
+    BlastoutAnalyze.pm --mode=import_blastout -if t/data/hs_all_plus_21_12_2015 -d hs_plus -v
 
     # remove header and import phylostratigraphic map into MySQL database (reads PS, TI and PSNAME from config)
     BlastoutAnalyze.pm --mode=import_map -if t/data/hs3.phmap_names -d hs_plus -v
+
+    # imports analyze stats file created by AnalyzePhyloDb (uses TI and PS sections in config)
+    BlastoutAnalyze.pm --mode=import_blastdb_stats -if t/data/analyze_hs_9606_cdhit_large_extracted  -d hs_plus -v
+
+    # runs BLAST output analysis - expanding every prot_id to its tax_id hits and species names
+    BlastoutAnalyze.pm --mode=analyze_blastout -d hs_plus -v
+
+    # runs summary per phylostrata per species of BLAST output analysis.
+    BlastoutAnalyze.pm --mode=report_per_ps -o t/data/ -d hs_plus -v
+
+    # removes specific hits from the BLAST output based on the specified tax_id (exclude bad genomes).
+    BlastoutAnalyze.pm --mode=exclude_ti_from_blastout -if t/data/hs_all_plus_21_12_2015 -ti 428574 -v
 
 # DESCRIPTION
 
@@ -39,10 +51,10 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
 - import\_blastout
 
         # options from command line
-        BlastoutAnalyze.pm --mode=import_blastout -if t/data/sc_OUTplus100 -o t/data/ -d hs_plus -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+        BlastoutAnalyze.pm --mode=import_blastout -if t/data/hs_all_plus_21_12_2015 -d hs_plus -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
 
         # options from config
-        BlastoutAnalyze.pm --mode=import_blastout -if t/data/sc_OUTplus100 -o t/data/ -d hs_plus
+        BlastoutAnalyze.pm --mode=import_blastout -if t/data/hs_all_plus_21_12_2015 -d hs_plus -v
 
     Extracts columns (prot\_id, ti, pgi, e\_value with no duplicates), writes them to tmp file and imports that file into MySQL (needs MySQL connection parameters to connect to MySQL).
 

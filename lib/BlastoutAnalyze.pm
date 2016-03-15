@@ -628,10 +628,9 @@ sub import_blastout {
     my ($param_href) = @_;
 
     my $infile = $param_href->{infile} or $log->logcroak('no $infile specified on command line!');
-    my $out    = $param_href->{out}    or $log->logcroak('no $out specified on command line!');
     my $table           = path($infile)->basename;
     $table =~ s/\./_/g;    #for files that have dots in name
-    my $blastout_import = path($out, $table . "_formated");
+    my $blastout_import = path($infile . "_formated");
 
     #first shorten the blastout file and extract useful columns
     _extract_blastout( { infile => $infile, blastout_import => $blastout_import } );
@@ -642,11 +641,11 @@ sub import_blastout {
     #create table
     my $create_query = qq{
     CREATE TABLE IF NOT EXISTS $table (
+	id INT UNSIGNED AUTO_INCREMENT NOT NULL,
     prot_id VARCHAR(40) NOT NULL,
     ti INT UNSIGNED NOT NULL,
     pgi CHAR(19) NOT NULL,
-    e_value REAL NOT NULL,
-    PRIMARY KEY(prot_id, ti, pgi)
+    PRIMARY KEY(id)
     )};
     _create_table( { table_name => $table, dbh => $dbh, query => $create_query } );
 
@@ -655,7 +654,7 @@ sub import_blastout {
     LOAD DATA INFILE '$blastout_import'
     INTO TABLE $table } . q{ FIELDS TERMINATED BY '\t'
     LINES TERMINATED BY '\n' 
-    (prot_id, ti, pgi, e_value)
+    (prot_id, ti, pgi)
     };
     eval { $dbh->do( $load_query, { async => 1 } ) };
 
@@ -684,7 +683,7 @@ sub import_blastout {
 
     # add index
     my $alter_query = qq{
-    ALTER TABLE $table ADD INDEX tix(ti)
+    ALTER TABLE $table ADD INDEX protx(prot_id), ADD INDEX tix(ti)
     };
     eval { $dbh->do( $alter_query, { async => 1 } ) };
 
@@ -709,7 +708,7 @@ sub import_blastout {
 
     #report success or failure
     $log->error( "Error: adding index tix on $table failed: $@" ) if $@;
-    $log->info( "Action: Index tix on $table added successfully!" ) unless $@;
+    $log->info( "Action: Indices protx and tix on $table added successfully!" ) unless $@;
 	
 	#delete file used to import so it doesn't use disk space
 	unlink $blastout_import and $log->warn("File $blastout_import unlinked!");
@@ -748,12 +747,12 @@ sub _extract_blastout {
     while ( <$blastout_fh> ) {
         chomp;
 
-		my ($prot_id, $hit, undef, undef, undef, undef, undef, undef, undef, undef, $e_value, undef) = split "\t", $_;
-		my ($pgi, $ti, undef) = $hit =~ m{pgi\|(\d+)\|ti\|(\d+)\|pi\|(?:\d+)\|};
+		my ($prot_id, $hit, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef) = split "\t", $_;
+		my ($pgi, $ti) = $hit =~ m{pgi\|(\d+)\|ti\|(\d+)\|pi\|(?:\d+)\|};
 
         # check for duplicates for same gene_id with same tax_id and pgi that differ only in e_value
         if (  "$prot_prev" . "$pgi_prev" . "$ti_prev" ne "$prot_id" . "$pgi" . "$ti" ) {
-            say {$blastout_fmt_fh} $prot_id, "\t", $ti, "\t", $pgi, "\t", $e_value;
+            say {$blastout_fmt_fh} $prot_id, "\t", $ti, "\t", $pgi;
 			$formated_cnt++;
         }
 
@@ -1312,62 +1311,6 @@ sub report_per_ps {
 # Throws     : croaks for parameters
 # Comments   : 
 # See Also   : 
-sub exclude_ti_from_blastout2 {
-    my $log = Log::Log4perl::get_logger("main");
-    $log->logcroak( 'exclude_ti_from_blastout() needs a hash_ref' ) unless @_ == 1;
-    my ($param_href) = @_;
-
-    my $infile   = $param_href->{infile} or $log->logcroak( 'no $infile specified on command line!' );
-    my $tax_id   = $param_href->{tax_id} or $log->logcroak( 'no $tax_id specified on command line!' );
-    my $blastout = path($infile)->basename;
-    my $blastout_good = path(path($infile)->parent, $blastout . "_good");
-	my $blastout_bad  = path(path($infile)->parent, $blastout . "_bad");
-    
-    open( my $blastout_fh,      "< :encoding(ASCII)", $infile )        or $log->logdie( "Blastout file $infile not found:$!" );
-    open( my $blastout_good_fh, "> :encoding(ASCII)", $blastout_good ) or $log->logdie( "good output $blastout_good:$!" );
-    open( my $blastout_bad_fh,  "> :encoding(ASCII)", $blastout_bad )  or $log->logdie( "bad output $blastout_bad:$!" );
-
-
-    #in blastout
-    #ENSG00000151914|ENSP00000354508    pgi|34252924|ti|9606|pi|0|  100.00  7461    0   0   1   7461    1   7461    0.0 1.437e+04
-    
-    local $.;
-	my $i_good = 0;
-	my $i_bad  = 0;
-    while ( <$blastout_fh> ) {
-        chomp;
-        my (undef, $id, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef) = split "\t" , $_;
-		my ($ti) = $id =~ m{\Apgi\|(?:\d+)\|ti\|(\d+)\|.+\z};   #pgi|0000000000042857453|ti|428574|pi|0|
-
-		#progress tracker
-        if ($. % 1000000 == 0) {
-            $log->trace( "$. lines processed!" );
-        }
-		
-		#if found bad id exclude from blastout
-		if ($ti == $tax_id) {
-			$i_bad++;
-			say {$blastout_bad_fh} $_;
-		}
-		else {
-			$i_good++;
-			say {$blastout_good_fh} $_;
-		}
-			
-    }
-	#give info about what you did
-    $log->info( "Report: file $blastout read successfully with $. lines" );
-    $log->info( "Report: file $blastout_good printed successfully with $i_good lines" );
-    $log->info( "Report: file $blastout_bad printed successfully with $i_bad lines" );
-
-	close $blastout_fh;
-	close $blastout_good_fh;
-	close $blastout_bad_fh;
-
-    return;
-}
-
-
 sub exclude_ti_from_blastout {
     my $log = Log::Log4perl::get_logger("main");
     $log->logcroak( 'exclude_ti_from_blastout() needs a hash_ref' ) unless @_ == 1;
@@ -1424,6 +1367,95 @@ sub exclude_ti_from_blastout {
     return;
 }
 
+
+### INTERFACE SUB ###
+# Usage      : --mode=report_per_ps_unique
+# Purpose    : reports blast output analysis per species (ti) per phylostrata and unique hits
+# Returns    : nothing
+# Parameters : 
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : 
+sub report_per_ps_unique {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('report_per_ps_unique() needs a $p_href') unless @_ == 1;
+    my ($p_href) = @_;
+
+    my $out = $p_href->{out} or $log->logcroak('no $out specified on command line!');
+    my $dbh = _dbi_connect($p_href);
+
+	# name the report_per_ps table
+	my $report_per_ps_tbl = "$p_href->{blastout}_report_per_ps";
+
+	# create summary per phylostrata per species
+    my $report_per_ps_alter = sprintf( qq{
+    ALTER TABLE %s ADD COLUMN unique_gene_hits INT, 
+	ADD COLUMN intersection_gene_hits INT, 
+	ADD COLUMN unique_gene_list MEDIUMTEXT
+	}, $dbh->quote_identifier($report_per_ps_tbl) );
+	$log->trace("Report: $report_per_ps_alter");
+	eval { $dbh->do($report_per_ps_alter) };
+    $log->error( "Error: table $report_per_ps_tbl failed to alter: $@" ) if $@;
+    $log->debug( "Report: table $report_per_ps_tbl alter succeeded" ) unless $@;
+
+	#for large GROUP_CONCAT selects
+	my $value = 16_777_215;
+	my $variables_query = qq{
+	SET SESSION group_concat_max_len = $value
+	};
+	eval { $dbh->do($variables_query) };
+    $log->error( "Error: changing SESSION group_concat_max_len=$value failed: $@" ) if $@;
+    $log->debug( "Report: changing SESSION group_concat_max_len=$value succeeded" ) unless $@;
+
+
+    # get columns from MAP table to iterate on phylostrata
+	my $select_ps_from_map = sprintf( qq{
+	SELECT DISTINCT phylostrata FROM %s ORDER BY phylostrata
+	}, $dbh->quote_identifier($p_href->{map}) );
+	
+	# get column phylostrata to array to iterate insert query on them
+	my @ps = map { $_->[0] } @{ $dbh->selectall_arrayref($select_ps_from_map) };
+	$log->trace( 'Returned phylostrata: {', join('}{', @ps), '}' );
+
+	foreach my $ps (@ps) {
+
+		#get gene_list from db
+		my $select_gene_list_from_report = sprintf( qq{
+	    SELECT DISTINCT ti, gene_list FROM %s ORDER BY gene_hits_per_species
+	    }, $dbh->quote_identifier($p_href->{report_per_ps}) );
+	    my %ti_genelist_h = map { $_->[1], $_->[2]} @{$dbh->selectall_arrayref($select_gene_list_from_report)};
+		$log->trace( 'Returned ti => gene_list: {' . p(%ti_genelist_h) . '}' );
+		# get ti list sorted by gene_hits_per_species
+		my @ti = map { $_->[0] } @{ $dbh->selectall_arrayref($select_gene_list_from_report) };
+
+		# transform gene_list to array
+		foreach my $ti (@ti) {
+			my @gene_list_a = split ",", $ti_genelist_h{$ti};
+			$ti_genelist_h{$ti} = \@gene_list_a;
+
+		}
+
+
+
+		#compare first array to second
+		#if not unique set intersection_
+		#else try another array
+
+
+
+	}   # end foreach ps
+
+
+    $dbh->disconnect;
+
+    return;
+}
+
+
+
+
+
+
 1;
 __END__
 
@@ -1439,7 +1471,7 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
     BlastoutAnalyze.pm --mode=create_db -d test_db_here
 
     # remove duplicates and import BLAST output file into MySQL database
-    BlastoutAnalyze.pm --mode=import_blastout -if t/data/sc_OUTplus100 -o t/data/ -d hs_plus
+    BlastoutAnalyze.pm --mode=import_blastout -if t/data/hs_all_plus_21_12_2015 -d hs_plus -v
 
     # remove header and import phylostratigraphic map into MySQL database (reads PS, TI and PSNAME from config)
     BlastoutAnalyze.pm --mode=import_map -if t/data/hs3.phmap_names -d hs_plus -v
@@ -1485,10 +1517,10 @@ Drops ( if it exists) and recreates database in MySQL (needs MySQL connection pa
 =item import_blastout
 
  # options from command line
- BlastoutAnalyze.pm --mode=import_blastout -if t/data/sc_OUTplus100 -o t/data/ -d hs_plus -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+ BlastoutAnalyze.pm --mode=import_blastout -if t/data/hs_all_plus_21_12_2015 -d hs_plus -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
 
  # options from config
- BlastoutAnalyze.pm --mode=import_blastout -if t/data/sc_OUTplus100 -o t/data/ -d hs_plus
+ BlastoutAnalyze.pm --mode=import_blastout -if t/data/hs_all_plus_21_12_2015 -d hs_plus -v
 
 Extracts columns (prot_id, ti, pgi, e_value with no duplicates), writes them to tmp file and imports that file into MySQL (needs MySQL connection parameters to connect to MySQL).
 
