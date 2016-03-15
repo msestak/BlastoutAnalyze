@@ -238,3 +238,23 @@ mocnii
     [2016/03/11 21:54:46,957]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:18 inserted 37 rows
     [2016/03/11 21:55:23,685]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:19 inserted 1978 rows
     [2016/03/11 21:55:23,685] INFO> BlastoutAnalyze::run line:97==>TIME when finished for: analyze_blastout
+
+
+    [msestak@tiktaalik blastoutanalyze]$ lib/BlastoutAnalyze.pm --mode=exclude_ti_from_blastout -if /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015 --tax_id=428574 -v -v
+    [2016/03/14 19:42:21,361] INFO> BlastoutAnalyze::run line:97==>RUNNING ACTION for mode: exclude_ti_from_blastout
+    [2016/03/14 19:42:30,914]TRACE> BlastoutAnalyze::exclude_ti_from_blastout line:1400==>1000000 lines processed!
+    [2016/03/14 20:32:50,361]TRACE> BlastoutAnalyze::exclude_ti_from_blastout line:1400==>323000000 lines processed!
+    [2016/03/14 20:32:54,837] INFO> BlastoutAnalyze::exclude_ti_from_blastout line:1416==>Report: file dm_all_plus_14_12_2015 read successfully with 323483392 lines
+    [2016/03/14 20:32:54,838] INFO> BlastoutAnalyze::exclude_ti_from_blastout line:1417==>Report: file /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015_good printed successfully with 323352334 lines
+    [2016/03/14 20:32:54,838] INFO> BlastoutAnalyze::exclude_ti_from_blastout line:1418==>Report: file /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015_bad printed successfully with 131058 lines
+    [2016/03/14 20:32:54,939] INFO> BlastoutAnalyze::run line:101==>TIME when finished for: exclude_ti_from_blastout
+
+
+    [msestak@tiktaalik blastoutanalyze]$ lib/BlastoutAnalyze.pm --mode=exclude_ti_from_blastout -if /home/msestak/prepare_blast/out/hs_plus/hs_all_plus_21_12_2015 --tax_id=428574 -v -v
+    [2016/03/14 18:26:05,584] INFO> BlastoutAnalyze::run line:97==>RUNNING ACTION for mode: exclude_ti_from_blastout
+    [2016/03/14 18:26:15,855]TRACE> BlastoutAnalyze::exclude_ti_from_blastout line:1343==>1000000 lines processed!
+    [2016/03/14 21:34:53,489]TRACE> BlastoutAnalyze::exclude_ti_from_blastout line:1343==>1152000000 lines processed!
+    [2016/03/14 21:34:56,669] INFO> BlastoutAnalyze::exclude_ti_from_blastout line:1359==>Report: file hs_all_plus_21_12_2015 read successfully with 1152339698 lines
+    [2016/03/14 21:34:56,670] INFO> BlastoutAnalyze::exclude_ti_from_blastout line:1360==>Report: file /home/msestak/prepare_blast/out/hs_plus/hs_all_plus_21_12_2015_good printed successfully with 1151804042 lines
+    [2016/03/14 21:34:56,670] INFO> BlastoutAnalyze::exclude_ti_from_blastout line:1361==>Report: file /home/msestak/prepare_blast/out/hs_plus/hs_all_plus_21_12_2015_bad printed successfully with 535656 lines
+    [2016/03/14 21:34:56,670] INFO> BlastoutAnalyze::run line:101==>TIME when finished for: exclude_ti_from_blastout

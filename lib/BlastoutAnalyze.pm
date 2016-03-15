@@ -1130,20 +1130,20 @@ sub analyze_blastout {
 	_create_table( { table_name => $p_href->{blastout_analysis}, dbh => $dbh, query => $blastout_analysis } );
 	$log->trace("Report: $blastout_analysis");
 
-	# create blastout_analysis_all table
-    my $blastout_analysis_all = sprintf( qq{
-    CREATE TABLE %s (
-	id INT UNSIGNED AUTO_INCREMENT NOT NULL,
-	ps TINYINT UNSIGNED NOT NULL,
-	prot_id VARCHAR(40) NOT NULL,
-	ti INT UNSIGNED NOT NULL,
-	species_name VARCHAR(200) NULL,
-	PRIMARY KEY(id),
-	KEY(ti),
-	KEY(prot_id)
-	)}, $dbh->quote_identifier("$p_href->{blastout_analysis}_all") );
-	_create_table( { table_name => "$p_href->{blastout_analysis}_all", dbh => $dbh, query => $blastout_analysis_all } );
-	$log->trace("Report: $blastout_analysis_all");
+#	# create blastout_analysis_all table
+#    my $blastout_analysis_all = sprintf( qq{
+#    CREATE TABLE %s (
+#	id INT UNSIGNED AUTO_INCREMENT NOT NULL,
+#	ps TINYINT UNSIGNED NOT NULL,
+#	prot_id VARCHAR(40) NOT NULL,
+#	ti INT UNSIGNED NOT NULL,
+#	species_name VARCHAR(200) NULL,
+#	PRIMARY KEY(id),
+#	KEY(ti),
+#	KEY(prot_id)
+#	)}, $dbh->quote_identifier("$p_href->{blastout_analysis}_all") );
+#	_create_table( { table_name => "$p_href->{blastout_analysis}_all", dbh => $dbh, query => $blastout_analysis_all } );
+#	$log->trace("Report: $blastout_analysis_all");
 
     # get columns from MAP table to iterate on phylostrata
 	my $select_ps_from_map = sprintf( qq{
@@ -1175,25 +1175,25 @@ sub _insert_blastout_analysis {
     $log->logcroak('_insert_blastout_analysis() needs a $param_href') unless @_ == 1;
     my ($p_href) = @_;
 
-	# create insert query for each phylostratum (blastout_analysis_all table)
-	my $insert_ps_query_all = qq{
-	INSERT INTO $p_href->{blastout_analysis}_all (ps, prot_id, ti, species_name)
-		SELECT DISTINCT map.phylostrata, map.prot_id, blout.ti, na.species_name
-		FROM $p_href->{blastout} AS blout
-		INNER JOIN $p_href->{map} AS map ON blout.prot_id = map.prot_id
-		INNER JOIN $p_href->{names} AS na ON blout.ti = na.ti
-		WHERE map.phylostrata = ?
-	};
-	my $sth_all = $p_href->{dbh}->prepare($insert_ps_query_all);
-	$log->trace("Report: $insert_ps_query_all");
-	
-	#iterate for each phylostratum and insert into blastout_analysis_all
-	foreach my $ps (@{ $p_href->{phylostrata} }) {
-	    eval { $sth_all->execute($ps) };
-		my $rows = $sth_all->rows;
-	    $log->error( qq{Error: inserting into "$p_href->{blastout_analysis}_all" failed for ps:$ps: $@} ) if $@;
-	    $log->debug( qq{Action: table "$p_href->{blastout_analysis}_all" for ps:$ps inserted $rows rows} ) unless $@;
-	}
+#	# create insert query for each phylostratum (blastout_analysis_all table)
+#	my $insert_ps_query_all = qq{
+#	INSERT INTO $p_href->{blastout_analysis}_all (ps, prot_id, ti, species_name)
+#		SELECT DISTINCT map.phylostrata, map.prot_id, blout.ti, na.species_name
+#		FROM $p_href->{blastout} AS blout
+#		INNER JOIN $p_href->{map} AS map ON blout.prot_id = map.prot_id
+#		INNER JOIN $p_href->{names} AS na ON blout.ti = na.ti
+#		WHERE map.phylostrata = ?
+#	};
+#	my $sth_all = $p_href->{dbh}->prepare($insert_ps_query_all);
+#	$log->trace("Report: $insert_ps_query_all");
+#	
+#	#iterate for each phylostratum and insert into blastout_analysis_all
+#	foreach my $ps (@{ $p_href->{phylostrata} }) {
+#	    eval { $sth_all->execute($ps) };
+#		my $rows = $sth_all->rows;
+#	    $log->error( qq{Error: inserting into "$p_href->{blastout_analysis}_all" failed for ps:$ps: $@} ) if $@;
+#	    $log->debug( qq{Action: table "$p_href->{blastout_analysis}_all" for ps:$ps inserted $rows rows} ) unless $@;
+#	}
 
 	# create insert query for each phylostratum (blastout_analysis table)
 	my $insert_ps_query = qq{
@@ -1444,6 +1444,18 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
     # remove header and import phylostratigraphic map into MySQL database (reads PS, TI and PSNAME from config)
     BlastoutAnalyze.pm --mode=import_map -if t/data/hs3.phmap_names -d hs_plus -v
 
+    # imports analyze stats file created by AnalyzePhyloDb (uses TI and PS sections in config)
+    BlastoutAnalyze.pm --mode=import_blastdb_stats -if t/data/analyze_hs_9606_cdhit_large_extracted  -d hs_plus -v
+
+    # runs BLAST output analysis - expanding every prot_id to its tax_id hits and species names
+    BlastoutAnalyze.pm --mode=analyze_blastout -d hs_plus -v
+
+    # runs summary per phylostrata per species of BLAST output analysis.
+    BlastoutAnalyze.pm --mode=report_per_ps -o t/data/ -d hs_plus -v
+
+    # removes specific hits from the BLAST output based on the specified tax_id (exclude bad genomes).
+    BlastoutAnalyze.pm --mode=exclude_ti_from_blastout -if t/data/hs_all_plus_21_12_2015 -ti 428574 -v
+
 
 =head1 DESCRIPTION
 
@@ -1678,6 +1690,26 @@ E<lt>msestak@irb.hrE<gt>
  [2016/03/11 21:54:46,957]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:18 inserted 37 rows
  [2016/03/11 21:55:23,685]DEBUG> BlastoutAnalyze::_insert_blastout_analysis line:1211==>Action: table hs_all_plus_21_12_2015_analysis for ps:19 inserted 1978 rows
  [2016/03/11 21:55:23,685] INFO> BlastoutAnalyze::run line:97==>TIME when finished for: analyze_blastout
+
+
+ [msestak@tiktaalik blastoutanalyze]$ lib/BlastoutAnalyze.pm --mode=exclude_ti_from_blastout -if /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015 --tax_id=428574 -v -v
+ [2016/03/14 19:42:21,361] INFO> BlastoutAnalyze::run line:97==>RUNNING ACTION for mode: exclude_ti_from_blastout
+ [2016/03/14 19:42:30,914]TRACE> BlastoutAnalyze::exclude_ti_from_blastout line:1400==>1000000 lines processed!
+ [2016/03/14 20:32:50,361]TRACE> BlastoutAnalyze::exclude_ti_from_blastout line:1400==>323000000 lines processed!
+ [2016/03/14 20:32:54,837] INFO> BlastoutAnalyze::exclude_ti_from_blastout line:1416==>Report: file dm_all_plus_14_12_2015 read successfully with 323483392 lines
+ [2016/03/14 20:32:54,838] INFO> BlastoutAnalyze::exclude_ti_from_blastout line:1417==>Report: file /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015_good printed successfully with 323352334 lines
+ [2016/03/14 20:32:54,838] INFO> BlastoutAnalyze::exclude_ti_from_blastout line:1418==>Report: file /home/msestak/prepare_blast/out/dm_plus/dm_all_plus_14_12_2015_bad printed successfully with 131058 lines
+ [2016/03/14 20:32:54,939] INFO> BlastoutAnalyze::run line:101==>TIME when finished for: exclude_ti_from_blastout
+
+
+ [msestak@tiktaalik blastoutanalyze]$ lib/BlastoutAnalyze.pm --mode=exclude_ti_from_blastout -if /home/msestak/prepare_blast/out/hs_plus/hs_all_plus_21_12_2015 --tax_id=428574 -v -v
+ [2016/03/14 18:26:05,584] INFO> BlastoutAnalyze::run line:97==>RUNNING ACTION for mode: exclude_ti_from_blastout
+ [2016/03/14 18:26:15,855]TRACE> BlastoutAnalyze::exclude_ti_from_blastout line:1343==>1000000 lines processed!
+ [2016/03/14 21:34:53,489]TRACE> BlastoutAnalyze::exclude_ti_from_blastout line:1343==>1152000000 lines processed!
+ [2016/03/14 21:34:56,669] INFO> BlastoutAnalyze::exclude_ti_from_blastout line:1359==>Report: file hs_all_plus_21_12_2015 read successfully with 1152339698 lines
+ [2016/03/14 21:34:56,670] INFO> BlastoutAnalyze::exclude_ti_from_blastout line:1360==>Report: file /home/msestak/prepare_blast/out/hs_plus/hs_all_plus_21_12_2015_good printed successfully with 1151804042 lines
+ [2016/03/14 21:34:56,670] INFO> BlastoutAnalyze::exclude_ti_from_blastout line:1361==>Report: file /home/msestak/prepare_blast/out/hs_plus/hs_all_plus_21_12_2015_bad printed successfully with 535656 lines
+ [2016/03/14 21:34:56,670] INFO> BlastoutAnalyze::run line:101==>TIME when finished for: exclude_ti_from_blastout
 
 
 =cut
