@@ -16,6 +16,9 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
     # imports analyze stats file created by AnalyzePhyloDb (uses TI and PS sections in config)
     BlastoutAnalyze.pm --mode=import_blastdb_stats -if t/data/analyze_hs_9606_cdhit_large_extracted  -d hs_plus -v
 
+    # import names file for species_name
+        BlastoutAnalyze.pm --mode=import_names -if t/data/names.dmp.fmt.new  -d hs_plus -v
+
     # runs BLAST output analysis - expanding every prot_id to its tax_id hits and species names
     BlastoutAnalyze.pm --mode=analyze_blastout -d hs_plus -v
 

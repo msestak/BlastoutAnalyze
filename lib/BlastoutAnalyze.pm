@@ -37,6 +37,7 @@ our @EXPORT_OK = qw{
   import_names
   analyze_blastout
   report_per_ps
+  report_per_ps_unique
   exclude_ti_from_blastout
 
 };
@@ -88,6 +89,7 @@ sub run {
 		import_names         => \&import_names,           # import names file
 		analyze_blastout     => \&analyze_blastout,       # analyzes BLAST output file using mapn names and blastout tables
 		report_per_ps        => \&report_per_ps,          # make a report of previous analysis (BLAST hits per phylostratum)
+		report_per_ps_unique => \&report_per_ps_unique,   # add unique BLAST hits per species
 		exclude_ti_from_blastout => \&exclude_ti_from_blastout,   # excludes specific tax_id from BLAST output file
 
     );
@@ -174,9 +176,11 @@ sub get_parameters_from_cmd {
         'nodes|no=s'    => \$cli{nodes},
         'names|na=s'    => \$cli{names},
 		'blastout=s'    => \$cli{blastout},
+		'blastout_analysis=s' => \$cli{blastout_analysis},
 		'map=s'         => \$cli{map},
 		'analyze_ps=s'  => \$cli{analyze_ps},
 		'analyze_genomes=s' => \$cli{analyze_genomes},
+		'report_per_ps=s' => \$cli{report_per_ps},
         'tax_id|ti=i'   => \$cli{tax_id},
 
         'host|ho=s'      => \$cli{host},
@@ -656,6 +660,7 @@ sub import_blastout {
     LINES TERMINATED BY '\n' 
     (prot_id, ti, pgi)
     };
+	$log->trace("$load_query");
     eval { $dbh->do( $load_query, { async => 1 } ) };
 
     # check status while running
@@ -1236,7 +1241,7 @@ sub report_per_ps {
     my $dbh = _dbi_connect($p_href);
 
 	# name the report_per_ps table
-	my $report_per_ps_tbl = "$p_href->{blastout}_report_per_ps";
+	my $report_per_ps_tbl = "$p_href->{report_per_ps}";
 
 	# create summary per phylostrata per species
     my $report_per_ps = sprintf( qq{
@@ -1387,57 +1392,84 @@ sub report_per_ps_unique {
 	# name the report_per_ps table
 	my $report_per_ps_tbl = "$p_href->{blastout}_report_per_ps";
 
-	# create summary per phylostrata per species
-    my $report_per_ps_alter = sprintf( qq{
-    ALTER TABLE %s ADD COLUMN unique_gene_hits INT, 
-	ADD COLUMN intersection_gene_hits INT, 
-	ADD COLUMN unique_gene_list MEDIUMTEXT
-	}, $dbh->quote_identifier($report_per_ps_tbl) );
-	$log->trace("Report: $report_per_ps_alter");
-	eval { $dbh->do($report_per_ps_alter) };
-    $log->error( "Error: table $report_per_ps_tbl failed to alter: $@" ) if $@;
-    $log->debug( "Report: table $report_per_ps_tbl alter succeeded" ) unless $@;
-
-	#for large GROUP_CONCAT selects
-	my $value = 16_777_215;
-	my $variables_query = qq{
-	SET SESSION group_concat_max_len = $value
-	};
-	eval { $dbh->do($variables_query) };
-    $log->error( "Error: changing SESSION group_concat_max_len=$value failed: $@" ) if $@;
-    $log->debug( "Report: changing SESSION group_concat_max_len=$value succeeded" ) unless $@;
-
+#	# create summary per phylostrata per species
+#    my $report_per_ps_alter = sprintf( qq{
+#    ALTER TABLE %s ADD COLUMN unique_gene_hits INT, 
+#	ADD COLUMN intersection_gene_hits INT, 
+#	ADD COLUMN unique_gene_list MEDIUMTEXT
+#	}, $dbh->quote_identifier($report_per_ps_tbl) );
+#	$log->trace("Report: $report_per_ps_alter");
+#	eval { $dbh->do($report_per_ps_alter) };
+#    $log->error( "Error: table $report_per_ps_tbl failed to alter: $@" ) if $@;
+#    $log->debug( "Report: table $report_per_ps_tbl alter succeeded" ) unless $@;
+#
+#	#for large GROUP_CONCAT selects
+#	my $value = 16_777_215;
+#	my $variables_query = qq{
+#	SET SESSION group_concat_max_len = $value
+#	};
+#	eval { $dbh->do($variables_query) };
+#    $log->error( "Error: changing SESSION group_concat_max_len=$value failed: $@" ) if $@;
+#    $log->debug( "Report: changing SESSION group_concat_max_len=$value succeeded" ) unless $@;
 
     # get columns from MAP table to iterate on phylostrata
 	my $select_ps_from_map = sprintf( qq{
-	SELECT DISTINCT phylostrata FROM %s ORDER BY phylostrata
-	}, $dbh->quote_identifier($p_href->{map}) );
+	SELECT DISTINCT ps FROM %s ORDER BY ps
+	}, $dbh->quote_identifier($report_per_ps_tbl) );
 	
 	# get column phylostrata to array to iterate insert query on them
 	my @ps = map { $_->[0] } @{ $dbh->selectall_arrayref($select_ps_from_map) };
 	$log->trace( 'Returned phylostrata: {', join('}{', @ps), '}' );
 
 	foreach my $ps (@ps) {
+		say $ps;
 
 		#get gene_list from db
 		my $select_gene_list_from_report = sprintf( qq{
 	    SELECT DISTINCT ti, gene_list FROM %s ORDER BY gene_hits_per_species
-	    }, $dbh->quote_identifier($p_href->{report_per_ps}) );
-	    my %ti_genelist_h = map { $_->[1], $_->[2]} @{$dbh->selectall_arrayref($select_gene_list_from_report)};
-		$log->trace( 'Returned ti => gene_list: {' . p(%ti_genelist_h) . '}' );
+	    }, $dbh->quote_identifier($report_per_ps_tbl) );
+	    my %ti_genelist_h = map { $_->[0], $_->[1]} @{$dbh->selectall_arrayref($select_gene_list_from_report)};
+		#p(%ti_genelist_h);
+
 		# get ti list sorted by gene_hits_per_species
 		my @ti = map { $_->[0] } @{ $dbh->selectall_arrayref($select_gene_list_from_report) };
+		p(@ti);
 
 		# transform gene_list to array
 		foreach my $ti (@ti) {
 			my @gene_list_a = split ",", $ti_genelist_h{$ti};
 			$ti_genelist_h{$ti} = \@gene_list_a;
-
 		}
-
-
+		p(%ti_genelist_h);
 
 		#compare first array to second
+		COMPARE_ARRAYS:{
+			my $first_ti = shift @ti;
+			my @first_array = $ti_genelist_h{$first_ti};
+			my (@intersection, @difference);
+			GO_THROUGH_TIS:
+			foreach my $ti (@ti) {   # rest of tis
+        		my %count = ();
+        		foreach my $element (@first_array, @{ $ti_genelist_h{$ti} }) { 
+					$count{$element}++;
+				}
+        		foreach my $element (keys %count) {
+        		    push @{ $count{$element} > 1 ? \@intersection : \@difference }, $element;
+        		}
+				print "for ti:$ti intersection is:", scalar @intersection, "and diff:", scalar @difference, "\n";
+				p(%count);
+				if (@first_array == @intersection) {
+					p(@intersection);
+					p(@difference);
+					next COMPARE_ARRAYS;
+				}
+				else {
+					next GO_THROUGH_TIS;
+				}
+			}
+		}   # end BLOCK
+
+
 		#if not unique set intersection_
 		#else try another array
 
@@ -1478,6 +1510,9 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
 
     # imports analyze stats file created by AnalyzePhyloDb (uses TI and PS sections in config)
     BlastoutAnalyze.pm --mode=import_blastdb_stats -if t/data/analyze_hs_9606_cdhit_large_extracted  -d hs_plus -v
+
+    # import names file for species_name
+	BlastoutAnalyze.pm --mode=import_names -if t/data/names.dmp.fmt.new  -d hs_plus -v
 
     # runs BLAST output analysis - expanding every prot_id to its tax_id hits and species names
     BlastoutAnalyze.pm --mode=analyze_blastout -d hs_plus -v
