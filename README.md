@@ -31,9 +31,15 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
     # update report_per_ps table with unique and intersect hts and gene lists
     BlastoutAnalyze.pm --mode=report_per_ps_unique -o t/data/ --report_per_ps=hs_all_plus_21_12_2015_report_per_ps -d hs_plus -v
 
+    # import full blastout with all columns (plus ti and pgi)
+    BlastoutAnalyze.pm --mode=import_blastout -if t/data/hs_all_plus_21_12_2015 -d hs_blastout -v
+
+    # import full BLAST database (plus ti and pgi columns)
+    BlastoutAnalyze.pm --mode=import_blastout -if t/data/db90_head.gz -d hs_blastout -v -v
+
 # DESCRIPTION
 
-BlastoutAnalyze is modulino used to analyze BLAST database (to get content in genomes and sequences) and BLAST output (to figure out wwhere are hits comming from. It includes config, command-line and logging management.
+BlastoutAnalyze is modulino used to analyze BLAST database (to get content in genomes and sequences) and BLAST output (to figure out wwhere are hits comming from). It includes config, command-line and logging management.
 
     --mode=mode                Description
     --mode=create_db           drops and recreates database in MySQL (needs MySQL connection parameters from config)
@@ -146,6 +152,16 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
         BlastoutAnalyze.pm --mode=import_blastout -if t/data/hs_all_plus_21_12_2015 -d hs_blastout -v
 
     Extracts hit column and splits it on ti and pgi and imports this file into MySQL (it has 2 extra columns = ti and pgi with no duplicates). It needs MySQL connection parameters to connect to MySQL.
+
+- import\_blastdb
+
+        # options from command line
+        BlastoutAnalyze.pm --mode=import_blastdb -if t/data/db90_head.gz -d hs_blastout -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+
+        # options from config
+        BlastoutAnalyze.pm --mode=import_blastout -if t/data/db90_head.gz -d hs_blastout -v -v
+
+    Imports BLAST database file into MySQL (it has 2 extra columns = ti and pgi). It needs MySQL connection parameters to connect to MySQL.
 
 # CONFIGURATION
 

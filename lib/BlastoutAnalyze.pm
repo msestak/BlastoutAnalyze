@@ -1821,6 +1821,34 @@ sub import_blastdb {
     	$log->info( "Report: import inserted $rows rows!" );
     	$log->error( "Report: loading $table failed: $@" ) if $@;
 
+		# add index
+	    my $alter_query = qq{
+	    ALTER TABLE $table ADD INDEX tix(ti)
+	    };
+	    eval { $dbh->do( $alter_query, { async => 1 } ) };
+	
+	    # check status while running
+	    my $dbh_check2            = _dbi_connect($param_href);
+	    until ( $dbh->mysql_async_ready ) {
+	        my $processlist_query = qq{
+	        SELECT TIME, STATE FROM INFORMATION_SCHEMA.PROCESSLIST
+	        WHERE DB = ? AND INFO LIKE 'ALTER%';
+	        };
+	        my ( $time, $state );
+	        my $sth = $dbh_check2->prepare($processlist_query);
+	        $sth->execute($param_href->{database});
+	        $sth->bind_columns( \( $time, $state ) );
+	        while ( $sth->fetchrow_arrayref ) {
+	            my $print = sprintf( "Time running:%d sec\tSTATE:%s\n", $time, $state );
+	            $log->trace( $print );
+	            sleep 10;
+	        }
+	    }
+	
+	    #report success or failure
+	    $log->error( "Error: adding index tix on $table failed: $@" ) if $@;
+	    $log->info( "Action: Index tix on $table added successfully!" ) unless $@;
+
 		$dbh->disconnect;
 
 		# communicate with child process
@@ -1872,10 +1900,16 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
     # update report_per_ps table with unique and intersect hts and gene lists
     BlastoutAnalyze.pm --mode=report_per_ps_unique -o t/data/ --report_per_ps=hs_all_plus_21_12_2015_report_per_ps -d hs_plus -v
 
+    # import full blastout with all columns (plus ti and pgi)
+    BlastoutAnalyze.pm --mode=import_blastout -if t/data/hs_all_plus_21_12_2015 -d hs_blastout -v
+
+    # import full BLAST database (plus ti and pgi columns)
+    BlastoutAnalyze.pm --mode=import_blastout -if t/data/db90_head.gz -d hs_blastout -v -v
+
 
 =head1 DESCRIPTION
 
-BlastoutAnalyze is modulino used to analyze BLAST database (to get content in genomes and sequences) and BLAST output (to figure out wwhere are hits comming from. It includes config, command-line and logging management.
+BlastoutAnalyze is modulino used to analyze BLAST database (to get content in genomes and sequences) and BLAST output (to figure out wwhere are hits comming from). It includes config, command-line and logging management.
 
  --mode=mode                Description
  --mode=create_db           drops and recreates database in MySQL (needs MySQL connection parameters from config)
