@@ -7,8 +7,8 @@ on 'test' => sub {
 
 requires 'strict';
 requires 'warnings';
-requires 'autodie';
 requires 'Exporter';
+requires 'File::Spec::Functions';
 requires 'Carp';
 requires 'Data::Dumper';
 requires 'Data::Printer';
@@ -22,6 +22,10 @@ requires 'Log::Log4perl';
 requires 'File::Find::Rule';
 requires 'DBI';
 requires 'DBD::mysql';
+requires 'Config::Std';
+requires 'DateTime::Tiny';
+requires 'POSIX';
 
 author_requires 'Term::ReadKey';
 author_requires 'Regexp::Debugger';
+

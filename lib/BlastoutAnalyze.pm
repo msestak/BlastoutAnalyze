@@ -18,6 +18,8 @@ use File::Find::Rule;
 use Config::Std { def_sep => '=' };   #MySQL uses =
 use DBI;
 use DBD::mysql;
+use DateTime::Tiny;
+use POSIX qw(mkfifo);
 
 our $VERSION = "0.01";
 
@@ -40,6 +42,7 @@ our @EXPORT_OK = qw{
   report_per_ps_unique
   exclude_ti_from_blastout
   import_blastout_full
+  import_blastdb
 
 };
 
@@ -93,6 +96,7 @@ sub run {
 		report_per_ps_unique => \&report_per_ps_unique,   # add unique BLAST hits per species
 		exclude_ti_from_blastout => \&exclude_ti_from_blastout,   # excludes specific tax_id from BLAST output file
         import_blastout_full => \&import_blastout_full,   # import BLAST output with all columns
+        import_blastdb       => \&import_blastdb,         # import BLAST database with all columns
 
     );
 
@@ -1673,6 +1677,158 @@ sub _extract_blastout_full {
 }
 
 
+### INTERFACE SUB ###
+# Usage      : --mode=import_blastdb
+# Purpose    : loads BLAST database to MySQL database from compressed file using named pipe
+# Returns    : nothing
+# Parameters : ( $param_href )
+# Throws     : croaks for parameters
+# Comments   : works on compressed file
+# See Also   : 
+sub import_blastdb {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak( 'import_blastdb() needs a hash_ref' ) unless @_ == 1;
+    my ($param_href) = @_;
+
+    my $infile = $param_href->{infile} or $log->logcroak('no $infile specified on command line!');
+    my $table  = path($infile)->basename;
+    $table     =~ s/\./_/g;    #for files that have dots in name
+	my $out    = path($infile)->parent;
+
+	# get date for named pipe file naming
+    my $now  = DateTime::Tiny->now;
+    my $date = $now->year . '_' . $now->month . '_' . $now->day . '_' . $now->hour . '_' . $now->minute . '_' . $now->second;
+	
+	# delete pipe if it exists
+	my $load_file = path($out, "blastdb_named_pipe_${date}");   #file for LOAD DATA INFILE
+	if (-p $load_file) {
+		unlink $load_file and $log->trace( "Action: named pipe $load_file removed!" );
+	}
+	#make named pipe
+	mkfifo( $load_file, 0666 ) or $log->logdie( "Error: mkfifo $load_file failed: $!" );
+
+	# open blastdb compressed file for reading
+	open my $blastdb_fh, "<:gzip", $infile or $log->logdie( "Can't open gzipped file $infile: $!" );
+
+	#start 2 processes (one for Perl-child and MySQL-parent)
+    my $pid = fork;
+
+	if (!defined $pid) {
+		$log->logdie( "Error: cannot fork: $!" );
+	}
+
+	elsif ($pid == 0) {
+		# Child-client process
+		$log->warn( "Action: Perl-child-client starting..." );
+
+		# open named pipe for writing (gziped file --> named pipe)
+		open my $blastdb_pipe_fh, "+<:encoding(ASCII)", $load_file or die $!;   #+< mode=read and write
+		
+		# define new block for reading blocks of fasta
+		{
+			local $/ = ">pgi";  #look in larger chunks between >gi (solo > found in header so can't use)
+			local $.;           #gzip count
+			my $out_cnt = 0;    #named pipe count
+
+			# print to named pipe
+			PIPE:
+			while (<$blastdb_fh>) {
+				chomp;
+				#print $blastdb_pipe_fh "$_";
+				#say '{', $_, '}';
+				next PIPE if $_ eq '';   #first iteration is empty?
+				
+				# extract pgi, prot_name and fasta + fasta
+				my ($pgi, $prot_name, $fasta) = $_ =~ m{\A([^\t]+)\t([^\n]+)\n(.+)\z}smx;
+				say "PGI:$pgi";
+				say "prot:$prot_name";
+				say "fasta:$fasta";
+
+				# remove illegal chars from fasta and upercase it
+			    $fasta =~ s/\R//g;      #delete multiple newlines (all vertical and horizontal space)
+				$fasta = uc $fasta;     #uppercase fasta
+			    $fasta =~ tr{A-Z}{}dc;  #delete all special characters (all not in A-Z)
+				$pgi = 'pgi' . $pgi;    #pgi removed as record separator (return it back)
+
+				# print to pipe
+				print {$blastdb_pipe_fh} "$pgi\t$prot_name\t$fasta\n";
+				$out_cnt++;
+
+				#progress tracker for blastdb file
+				if ($. % 1000000 == 0) {
+					$log->trace( "$. lines processed!" );
+				}
+			}
+			my $blastdb_file_line_cnt = $. - 1;   #first line read empty (don't know why)
+			$log->warn( "Report: file $infile has $blastdb_file_line_cnt fasta records!" );
+			$log->warn( "Action: file $load_file written with $out_cnt lines/fasta records!" );
+		}   #END block writing to pipe
+
+		$log->warn( "Action: Perl-child-client terminating :)" );
+		exit 0;
+	}
+	else {
+		# MySQL-parent process
+		$log->warn( "Action: MySQL-parent process, waiting for child..." );
+		
+		# SECOND PART: loading named pipe into db
+		my $database = $param_href->{database}    or $log->logcroak( 'no $database specified on command line!' );
+		
+		# get new handle
+    	my $dbh = _dbi_connect($param_href);
+
+    	# create a table to load into
+    	my $create_query = sprintf( qq{
+    	CREATE TABLE %s (
+    	pgi VARCHAR(50) NOT NULL,
+    	prot_name VARCHAR(50) NOT NULL,
+    	fasta MEDIUMTEXT NOT NULL,
+    	PRIMARY KEY(pgi)
+    	)}, $dbh->quote_identifier($table) );
+		_create_table( { table_name => $table, dbh => $dbh, query => $create_query, %{$param_href} } );
+		$log->trace("Report: $create_query");
+
+		#import table
+    	my $load_query = qq{
+    	LOAD DATA INFILE '$load_file'
+    	INTO TABLE $table } . q{ FIELDS TERMINATED BY '\t'
+    	LINES TERMINATED BY '\n'
+    	};
+    	eval { $dbh->do( $load_query, { async => 1 } ) };
+
+    	#check status while running LOAD DATA INFILE
+    	{    
+    	    my $dbh_check         = _dbi_connect($param_href);
+    	    until ( $dbh->mysql_async_ready ) {
+				my $processlist_query = qq{
+					SELECT TIME, STATE FROM INFORMATION_SCHEMA.PROCESSLIST
+					WHERE DB = ? AND INFO LIKE 'LOAD DATA INFILE%';
+					};
+    	        my $sth = $dbh_check->prepare($processlist_query);
+    	        $sth->execute($database);
+    	        my ( $time, $state );
+    	        $sth->bind_columns( \( $time, $state ) );
+    	        while ( $sth->fetchrow_arrayref ) {
+    	            my $process = sprintf( "Time running:%d sec\tSTATE:%s\n", $time, $state );
+    	            $log->trace( $process );
+    	            sleep 10;
+    	        }
+    	    }
+    	}    #end check LOAD DATA INFILE
+    	my $rows = $dbh->mysql_async_result;
+    	$log->info( "Report: import inserted $rows rows!" );
+    	$log->error( "Report: loading $table failed: $@" ) if $@;
+
+		$dbh->disconnect;
+
+		# communicate with child process
+		waitpid $pid, 0;
+	}
+	$log->warn( "MySQL-parent process end after child has finished" );
+		unlink $load_file and $log->warn( "Action: named pipe $load_file removed!" );
+
+	return;
+}
 
 
 

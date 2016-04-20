@@ -137,6 +137,16 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
 
     Update report\_per\_ps table with unique and intersect hits and gene lists.
 
+- import\_blastout\_full
+
+        # options from command line
+        BlastoutAnalyze.pm --mode=import_blastout -if t/data/hs_all_plus_21_12_2015 -d hs_blastout -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+
+        # options from config
+        BlastoutAnalyze.pm --mode=import_blastout -if t/data/hs_all_plus_21_12_2015 -d hs_blastout -v
+
+    Extracts hit column and splits it on ti and pgi and imports this file into MySQL (it has 2 extra columns = ti and pgi with no duplicates). It needs MySQL connection parameters to connect to MySQL.
+
 # CONFIGURATION
 
 All configuration in set in blastoutanalyze.cnf that is found in ./lib directory (it can also be set with --config option on command line). It follows [Config::Std](https://metacpan.org/pod/Config::Std) format and rules.

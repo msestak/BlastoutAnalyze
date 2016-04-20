@@ -24,6 +24,7 @@ my @subs = qw(
   report_per_ps_unique
   exclude_ti_from_blastout
   import_blastout_full
+  import_blastdb
 );
 
 use_ok( $module, @subs);
