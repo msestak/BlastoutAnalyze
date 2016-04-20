@@ -1571,7 +1571,7 @@ sub import_blastout_full {
         $sth->execute($param_href->{database});
         $sth->bind_columns( \( $time, $state ) );
         while ( $sth->fetchrow_arrayref ) {
-            my $print = sprintf( "Time running:%0.3f sec\tSTATE:%s\n", $time, $state );
+            my $print = sprintf( "Time running:%d sec\tSTATE:%s\n", $time, $state );
             $log->trace( $print );
             sleep 10;
         }
@@ -1599,7 +1599,7 @@ sub import_blastout_full {
         $sth->execute($param_href->{database});
         $sth->bind_columns( \( $time, $state ) );
         while ( $sth->fetchrow_arrayref ) {
-            my $print = sprintf( "Time running:%0.3f sec\tSTATE:%s\n", $time, $state );
+            my $print = sprintf( "Time running:%d sec\tSTATE:%s\n", $time, $state );
             $log->trace( $print );
             sleep 10;
         }
