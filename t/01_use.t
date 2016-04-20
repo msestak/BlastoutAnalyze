@@ -14,7 +14,16 @@ my @subs = qw(
   _dbi_connect
   _create_table
   create_db
- 
+  blastout_analyze
+  import_blastout
+  import_map
+  import_blastdb_stats
+  import_names
+  analyze_blastout
+  report_per_ps
+  report_per_ps_unique
+  exclude_ti_from_blastout
+  import_blastout_full
 );
 
 use_ok( $module, @subs);
