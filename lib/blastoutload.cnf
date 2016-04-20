@@ -1,0 +1,24 @@
+[General]
+#in       = /home/msestak/prepare_blast/out/dr_plus/
+out      =  t/data/
+#infile   = /home/msestak/mysql-5.6.27-linux-glibc2.5-x86_64.tar.gz
+#outfile  = /home/msestak/prepare_blast/out/dr_04_02_2016.xlsx
+
+[Database]
+host     = localhost
+database = test
+user     = user
+password = pass
+port     = 5625
+socket   = /tmp/mysql_sandbox5625.sock
+charset  = ascii
+
+[Tables]
+names             = names_dmp_fmt_new
+blastout          = hs_all_plus_21_12_2015
+blastout_analysis = hs_all_plus_21_12_2015_analysis
+map               = hs3_map
+analyze_ps        = analyze_hs_9606_cdhit_large_extracted_stats_ps
+analyze_genomes   = analyze_hs_9606_cdhit_large_extracted_stats_genomes
+report_per_ps     = hs_all_plus_21_12_2015_good_report_per_ps
+

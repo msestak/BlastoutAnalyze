@@ -1739,19 +1739,19 @@ sub import_blastdb {
 				next PIPE if $_ eq '';   #first iteration is empty?
 				
 				# extract pgi, prot_name and fasta + fasta
-				my ($pgi, $prot_name, $fasta) = $_ =~ m{\A([^\t]+)\t([^\n]+)\n(.+)\z}smx;
-				say "PGI:$pgi";
-				say "prot:$prot_name";
-				say "fasta:$fasta";
+				my ($prot_id, $prot_name, $fasta) = $_ =~ m{\A([^\t]+)\t([^\n]+)\n(.+)\z}smx;
+
+				#pgi removed as record separator (return it back)
+				$prot_id = 'pgi' . $prot_id;
+		        my ($pgi, $ti) = $prot_id =~ m{pgi\|(\d+)\|ti\|(\d+)\|pi\|(?:\d+)\|};
 
 				# remove illegal chars from fasta and upercase it
 			    $fasta =~ s/\R//g;      #delete multiple newlines (all vertical and horizontal space)
 				$fasta = uc $fasta;     #uppercase fasta
 			    $fasta =~ tr{A-Z}{}dc;  #delete all special characters (all not in A-Z)
-				$pgi = 'pgi' . $pgi;    #pgi removed as record separator (return it back)
 
 				# print to pipe
-				print {$blastdb_pipe_fh} "$pgi\t$prot_name\t$fasta\n";
+				print {$blastdb_pipe_fh} "$prot_id\t$pgi\t$ti\t$prot_name\t$fasta\n";
 				$out_cnt++;
 
 				#progress tracker for blastdb file
@@ -1780,8 +1780,10 @@ sub import_blastdb {
     	# create a table to load into
     	my $create_query = sprintf( qq{
     	CREATE TABLE %s (
-    	pgi VARCHAR(50) NOT NULL,
-    	prot_name VARCHAR(50) NOT NULL,
+    	prot_id VARCHAR(40) NOT NULL,
+        pgi CHAR(19) NOT NULL,
+		ti INT UNSIGNED NOT NULL,
+    	prot_name VARCHAR(200) NOT NULL,
     	fasta MEDIUMTEXT NOT NULL,
     	PRIMARY KEY(pgi)
     	)}, $dbh->quote_identifier($table) );
@@ -1989,6 +1991,16 @@ Update report_per_ps table with unique and intersect hits and gene lists.
  BlastoutAnalyze.pm --mode=import_blastout -if t/data/hs_all_plus_21_12_2015 -d hs_blastout -v
 
 Extracts hit column and splits it on ti and pgi and imports this file into MySQL (it has 2 extra columns = ti and pgi with no duplicates). It needs MySQL connection parameters to connect to MySQL.
+
+=item import_blastdb
+
+ # options from command line
+ BlastoutAnalyze.pm --mode=import_blastdb -if t/data/db90_head.gz -d hs_blastout -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+
+ # options from config
+ BlastoutAnalyze.pm --mode=import_blastout -if t/data/db90_head.gz -d hs_blastout -v -v
+
+Imports BLAST database file into MySQL (it has 2 extra columns = ti and pgi). It needs MySQL connection parameters to connect to MySQL.
 
 =back
 
