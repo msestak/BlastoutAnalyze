@@ -153,6 +153,20 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
 
     Extracts hit column and splits it on ti and pgi and imports this file into MySQL (it has 2 extra columns = ti and pgi with no duplicates). It needs MySQL connection parameters to connect to MySQL.
 
+        [2016/04/20 16:12:42,230] INFO> BlastoutAnalyze::run line:101==>RUNNING ACTION for mode: import_blastout_full
+        [2016/04/20 16:12:42,232]DEBUG> BlastoutAnalyze::_extract_blastout_full line:1644==>Report: started processing of /home/msestak/prepare_blast/out/random/hs_all_plus_21_12_2015_good
+        [2016/04/20 16:12:51,790]TRACE> BlastoutAnalyze::_extract_blastout_full line:1664==>1000000 lines processed!
+        ...  Perl processing (3.5 h)
+        [2016/04/20 19:37:59,376]TRACE> BlastoutAnalyze::_extract_blastout_full line:1664==>1151000000 lines processed!
+        [2016/04/20 19:38:07,991] INFO> BlastoutAnalyze::_extract_blastout_full line:1670==>Report: file /home/msestak/prepare_blast/out/random/hs_all_plus_21_12_2015_good_formated printed successfully with 503625726 lines (from 1151804042 original lines)
+        [2016/04/20 19:38:08,034]TRACE> BlastoutAnalyze::import_blastout_full line:1575==>Time running:0 sec    STATE:Fetched about 2000 rows, loading data still remains
+        ... Load (50 min)
+        [2016/04/20 20:28:58,788] INFO> BlastoutAnalyze::import_blastout_full line:1581==>Action: import inserted 503625726 rows!
+        [2016/04/20 20:28:58,807]TRACE> BlastoutAnalyze::import_blastout_full line:1603==>Time running:0 sec    STATE:Adding indexes
+        ... indexing (33 min)
+        [2016/04/20 21:01:59,155] INFO> BlastoutAnalyze::import_blastout_full line:1610==>Action: Indices protx and tix on hs_all_plus_21_12_2015_good added successfully!
+        [2016/04/20 21:01:59,156] INFO> BlastoutAnalyze::run line:105==>TIME when finished for: import_blastout_full
+
 - import\_blastdb
 
         # options from command line
@@ -162,6 +176,14 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
         BlastoutAnalyze.pm --mode=import_blastout -if t/data/db90_head.gz -d hs_blastout -v -v
 
     Imports BLAST database file into MySQL (it has 2 extra columns = ti and pgi). It needs MySQL connection parameters to connect to MySQL.
+
+        ... Load (41 min)
+        [2016/04/22 00:41:42,563]TRACE> BlastoutAnalyze::import_blastdb line:1815==>Time running:2460 sec       STATE:Verifying index uniqueness: Checked 43450000 of 0 rows in key-PR
+        [2016/04/22 00:41:52,564] INFO> BlastoutAnalyze::import_blastdb line:1821==>Report: import inserted 43899817 rows!
+        [2016/04/22 00:41:52,567]TRACE> BlastoutAnalyze::import_blastdb line:1843==>Time running:0 sec  STATE:Adding indexes
+        ... Indexing (2 min)
+        [2016/04/22 00:43:52,588] INFO> BlastoutAnalyze::import_blastdb line:1850==>Action: Index tix on db90_gz added successfully!
+        [2016/04/22 00:43:52,590] INFO> BlastoutAnalyze::run line:109==>TIME when finished for: import_blastdb
 
 # CONFIGURATION
 
