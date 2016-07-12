@@ -1904,7 +1904,7 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
     BlastoutAnalyze.pm --mode=import_blastout -if t/data/hs_all_plus_21_12_2015 -d hs_blastout -v
 
     # import full BLAST database (plus ti and pgi columns)
-    BlastoutAnalyze.pm --mode=import_blastout -if t/data/db90_head.gz -d hs_blastout -v -v
+    BlastoutAnalyze.pm --mode=import_blastdb -if t/data/db90_head.gz -d hs_blastout -v -v
 
 
 =head1 DESCRIPTION
@@ -2047,7 +2047,7 @@ Extracts hit column and splits it on ti and pgi and imports this file into MySQL
  BlastoutAnalyze.pm --mode=import_blastdb -if t/data/db90_head.gz -d hs_blastout -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
 
  # options from config
- BlastoutAnalyze.pm --mode=import_blastout -if t/data/db90_head.gz -d hs_blastout -v -v
+ BlastoutAnalyze.pm --mode=import_blastdb -if t/data/db90_head.gz -d hs_blastout -v -v
 
 Imports BLAST database file into MySQL (it has 2 extra columns = ti and pgi). It needs MySQL connection parameters to connect to MySQL.
 
