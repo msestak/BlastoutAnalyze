@@ -181,6 +181,7 @@ sub get_parameters_from_cmd {
 
         'nodes|no=s'    => \$cli{nodes},
         'names|na=s'    => \$cli{names},
+        'names_tbl=s'    => \$cli{names_tbl},
 		'blastout=s'    => \$cli{blastout},
 		'blastout_analysis=s' => \$cli{blastout_analysis},
 		'map=s'         => \$cli{map},
@@ -910,16 +911,20 @@ sub import_blastdb_stats {
     $log->logcroak('import_blastdb_stats() needs a $param_href') unless @_ == 1;
     my ($param_href) = @_;
 
-    my $infile = $param_href->{infile} or $log->logcroak('no $infile specified on command line!');
-	my $stats_ps_tbl = path($infile)->basename;
-	$stats_ps_tbl   .= '_stats_ps';
-	my $stats_genomes_tbl = path($infile)->basename;
-	$stats_genomes_tbl   .='_stats_genomes';
+    my $infile    = $param_href->{infile}    or $log->logcroak('no $infile specified on command line!');
+    my $names_tbl = $param_href->{names_tbl} or $log->logcroak('no $names_tbl specified on command line!');
+    my $stats_ps_tbl = path($infile)->basename;
+    $stats_ps_tbl =~ s/\./_/g;         #for files that have dots in name
+    $stats_ps_tbl .= '_stats_ps';
+    my $stats_genomes_tbl = path($infile)->basename;
+    $stats_genomes_tbl =~ s/\./_/g;    #for files that have dots in name
+    $stats_genomes_tbl .= '_stats_genomes';
 
-	my $dbh = _dbi_connect($param_href);
+    my $dbh = _dbi_connect($param_href);
 
     # create ps summary table
-    my $ps_summary = sprintf( qq{
+    my $ps_summary = sprintf(
+        qq{
 	CREATE TABLE %s (
 	phylostrata TINYINT UNSIGNED NOT NULL,
 	num_of_genomes INT UNSIGNED NOT NULL,
@@ -927,12 +932,14 @@ sub import_blastdb_stats {
 	PRIMARY KEY(phylostrata),
 	KEY(ti),
 	KEY(num_of_genomes)
-    ) }, $dbh->quote_identifier($stats_ps_tbl) );
-	_create_table( { table_name => $stats_ps_tbl, dbh => $dbh, query => $ps_summary } );
-	$log->trace("Report: $ps_summary");
+    ) }, $dbh->quote_identifier($stats_ps_tbl)
+    );
+    _create_table( { table_name => $stats_ps_tbl, dbh => $dbh, query => $ps_summary } );
+    $log->trace("Report: $ps_summary");
 
-	# create genomes per phylostrata table
-    my $genomes_per_ps = sprintf( qq{
+    # create genomes per phylostrata table
+    my $genomes_per_ps = sprintf(
+        qq{
 	CREATE TABLE %s (
 	phylostrata TINYINT UNSIGNED NOT NULL,
 	psti INT UNSIGNED NOT NULL,
@@ -941,32 +948,37 @@ sub import_blastdb_stats {
 	PRIMARY KEY(ti),
 	KEY(phylostrata),
 	KEY(num_of_genes)
-    ) }, $dbh->quote_identifier($stats_genomes_tbl) );
-	_create_table( { table_name => $stats_genomes_tbl, dbh => $dbh, query => $genomes_per_ps } );
-	$log->trace("Report: $genomes_per_ps");
+    ) }, $dbh->quote_identifier($stats_genomes_tbl)
+    );
+    _create_table( { table_name => $stats_genomes_tbl, dbh => $dbh, query => $genomes_per_ps } );
+    $log->trace("Report: $genomes_per_ps");
 
-	# create tmp file for genomes part of stats file
-	my $temp_stats = path(path($infile)->parent, $stats_genomes_tbl);
-	open (my $tmp_fh, ">", $temp_stats) or $log->logdie("Error: can't open map $temp_stats for writing:$!");
+    # create tmp file for genomes part of stats file
+    my $temp_stats = path( path($infile)->parent, $stats_genomes_tbl );
+    open( my $tmp_fh, ">", $temp_stats ) or $log->logdie("Error: can't open map $temp_stats for writing:$!");
 
-	# read and import stats file into MySQL
-	_read_stats_file( { ps_tbl => $stats_ps_tbl, dbh => $dbh, %{$param_href}, tmp_fh => $tmp_fh } );
+    # read and import stats file into MySQL
+    _read_stats_file( { ps_tbl => $stats_ps_tbl, dbh => $dbh, %{$param_href}, tmp_fh => $tmp_fh } );
 
-	# load genomes per phylostrata
+    # load genomes per phylostrata
     my $load_query = qq{
     LOAD DATA INFILE '$temp_stats'
     INTO TABLE $stats_genomes_tbl } . q{ FIELDS TERMINATED BY '\t'
     LINES TERMINATED BY '\n'
     };
-	$log->trace("Report: $load_query");
-	my $rows;
-    eval { $rows = $dbh->do( $load_query ) };
-	$log->error( "Action: loading into table $stats_genomes_tbl failed: $@" ) if $@;
-	$log->debug( "Action: table $stats_genomes_tbl inserted $rows rows!" ) unless $@;
+    $log->trace("Report: $load_query");
+    my $rows;
+    eval { $rows = $dbh->do($load_query) };
+    $log->error("Action: loading into table $stats_genomes_tbl failed: $@") if $@;
+    $log->debug("Action: table $stats_genomes_tbl inserted $rows rows!") unless $@;
 
-	# unlink tmp map file
-	unlink $temp_stats and $log->warn("Action: $temp_stats unlinked");
-	$dbh->disconnect;
+    # unlink tmp map file
+    unlink $temp_stats and $log->warn("Action: $temp_stats unlinked");
+
+    # modify stats tables to be more useful
+    _modify_stats_tables( { %$param_href, stats_genomes_tbl => $stats_genomes_tbl, stats_ps_tbl => $stats_ps_tbl } );
+
+    $dbh->disconnect;
 
     return;
 }
@@ -1067,6 +1079,59 @@ sub _read_stats_file {
     return;
 }
 
+
+### INTERNAL UTILITY ###
+# Usage      : _modify_stats_tables( { %$param_href, stats_genomes_tbl => $stats_genomes_tbl, stats_ps_tbl => $stats_ps_tbl } );
+# Purpose    : 
+# Returns    : nothing
+# Parameters : 
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : 
+sub _modify_stats_tables {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_modify_stats_tables() needs a $param_href') unless @_ == 1;
+    my ($param_href) = @_;
+
+    my $dbh = _dbi_connect($param_href);
+
+    # drop and recreate stats_ps_tbl
+    my $ps_summary = sprintf( qq{
+    CREATE TABLE %s (
+    phylostrata TINYINT UNSIGNED NOT NULL,
+    psti INT UNSIGNED NOT NULL,
+    num_of_genomes INT UNSIGNED NOT NULL,
+    num_of_genes INT UNSIGNED NOT NULL,
+    PRIMARY KEY(phylostrata)
+    )
+    SELECT phylostrata, psti, COUNT(num_of_genes) AS num_of_genomes, SUM(num_of_genes) AS num_of_genes
+    FROM %s
+    GROUP BY phylostrata
+    }, $dbh->quote_identifier( $param_href->{stats_ps_tbl} ), $dbh->quote_identifier( $param_href->{stats_genomes_tbl} )
+    );
+    _create_table( { table_name => $param_href->{stats_ps_tbl}, dbh => $dbh, query => $ps_summary } );
+    $log->trace("Report: $ps_summary");
+
+	# add species_name to stats_genomes_tbl
+	my $alter_stats_q = sprintf( qq{
+	ALTER TABLE %s ADD COLUMN species_name VARCHAR(200)
+	}, $dbh->quote_identifier( $param_href->{stats_genomes_tbl} ) );
+    eval { $dbh->do( $alter_stats_q ) };
+	$log->error( "Action: alter table {$param_href->{stats_genomes_tbl}} failed: $@" ) if $@;
+	$log->debug( "Action: table {$param_href->{stats_genomes_tbl}} altered!" ) unless $@;
+
+	my $update_stats_q = sprintf( qq{
+    UPDATE %s AS st
+    INNER JOIN %s AS na ON na.ti = st.ti
+    SET st.species_name = na.species_name
+	}, $dbh->quote_identifier( $param_href->{stats_genomes_tbl} ), $dbh->quote_identifier( $param_href->{names_tbl} ) );
+
+	my $rows;
+    eval { $rows = $dbh->do( $update_stats_q ) };
+	$log->error( "Action: updating table {$param_href->{stats_genomes_tbl}} failed: $@" ) if $@;
+	$log->debug( "Action: table {$param_href->{stats_genomes_tbl}} updated $rows rows!" ) unless $@;
+    return;
+}
 
 ### INTERFACE SUB ###
 # Usage      : --mode=import_names
@@ -1883,7 +1948,7 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
     BlastoutAnalyze.pm --mode=import_map -if t/data/hs3.phmap_names -d hs_plus -v
 
     # imports analyze stats file created by AnalyzePhyloDb (uses TI and PS sections in config)
-    BlastoutAnalyze.pm --mode=import_blastdb_stats -if t/data/analyze_hs_9606_cdhit_large_extracted  -d hs_plus -v
+    BlastoutAnalyze.pm --mode=import_blastdb_stats -if t/data/analyze_hs_9606_cdhit_large_extracted  -d hs_plus --names_tbl=names_dmp_fmt_new -v
 
     # import names file for species_name
     BlastoutAnalyze.pm --mode=import_names -if t/data/names.dmp.fmt.new  -d hs_plus -v
@@ -1956,10 +2021,10 @@ It can use PS and TI config sections.
 =item import_blastdb_stats
 
  # options from command line
- BlastoutAnalyze.pm --mode=import_blastdb_stats -if t/data/analyze_hs_9606_cdhit_large_extracted  -d hs_plus -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+ BlastoutAnalyze.pm --mode=import_blastdb_stats -if t/data/analyze_hs_9606_cdhit_large_extracted  -d hs_plus --names_tbl=names_dmp_fmt_new -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
 
  # options from config
- BlastoutAnalyze.pm --mode=import_blastdb_stats -if t/data/analyze_hs_9606_cdhit_large_extracted  -d hs_plus -v
+ BlastoutAnalyze.pm --mode=import_blastdb_stats -if t/data/analyze_hs_9606_cdhit_large_extracted  -d hs_plus --names_tbl=names_dmp_fmt_new -v
 
 Imports analyze stats file created by AnalyzePhyloDb.
   AnalysePhyloDb -n /home/msestak/dropbox/Databases/db_02_09_2015/data/nr_raw/nodes.dmp.fmt.new.sync -d /home/msestak/dropbox/Databases/db_02_09_2015/data/cdhit_large/extracted/ -t 9606 > analyze_hs_9606_cdhit_large_extracted
