@@ -1966,7 +1966,7 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
     BlastoutAnalyze.pm --mode=report_per_ps_unique -o t/data/ --report_per_ps=hs_all_plus_21_12_2015_report_per_ps -d hs_plus -v
 
     # import full blastout with all columns (plus ti and pgi)
-    BlastoutAnalyze.pm --mode=import_blastout -if t/data/hs_all_plus_21_12_2015 -d hs_blastout -v
+    BlastoutAnalyze.pm --mode=import_blastout_full -if t/data/hs_all_plus_21_12_2015 -d hs_blastout -v
 
     # import full BLAST database (plus ti and pgi columns)
     BlastoutAnalyze.pm --mode=import_blastdb -if t/data/db90_head.gz -d hs_blastout -v -v
@@ -2084,10 +2084,10 @@ Update report_per_ps table with unique and intersect hits and gene lists.
 =item import_blastout_full
 
  # options from command line
- BlastoutAnalyze.pm --mode=import_blastout -if t/data/hs_all_plus_21_12_2015 -d hs_blastout -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+ BlastoutAnalyze.pm --mode=import_blastout_full -if t/data/hs_all_plus_21_12_2015 -d hs_blastout -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
 
  # options from config
- BlastoutAnalyze.pm --mode=import_blastout -if t/data/hs_all_plus_21_12_2015 -d hs_blastout -v
+ BlastoutAnalyze.pm --mode=import_blastout_full -if t/data/hs_all_plus_21_12_2015 -d hs_blastout -v
 
 Extracts hit column and splits it on ti and pgi and imports this file into MySQL (it has 2 extra columns = ti and pgi with no duplicates). It needs MySQL connection parameters to connect to MySQL.
 
