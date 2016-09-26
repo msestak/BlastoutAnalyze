@@ -14,7 +14,7 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
     BlastoutAnalyze.pm --mode=import_map -if t/data/hs3.phmap_names -d hs_plus -v
 
     # imports analyze stats file created by AnalyzePhyloDb (uses TI and PS sections in config)
-    BlastoutAnalyze.pm --mode=import_blastdb_stats -if t/data/analyze_hs_9606_cdhit_large_extracted  -d hs_plus -v
+    BlastoutAnalyze.pm --mode=import_blastdb_stats -if t/data/analyze_hs_9606_cdhit_large_extracted  -d hs_plus --names_tbl=names_dmp_fmt_new -v
 
     # import names file for species_name
     BlastoutAnalyze.pm --mode=import_names -if t/data/names.dmp.fmt.new  -d hs_plus -v
@@ -32,7 +32,7 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
     BlastoutAnalyze.pm --mode=report_per_ps_unique -o t/data/ --report_per_ps=hs_all_plus_21_12_2015_report_per_ps -d hs_plus -v
 
     # import full blastout with all columns (plus ti and pgi)
-    BlastoutAnalyze.pm --mode=import_blastout -if t/data/hs_all_plus_21_12_2015 -d hs_blastout -v
+    BlastoutAnalyze.pm --mode=import_blastout_full -if t/data/hs_all_plus_21_12_2015 -d hs_blastout -v
 
     # import full BLAST database (plus ti and pgi columns)
     BlastoutAnalyze.pm --mode=import_blastdb -if t/data/db90_head.gz -d hs_blastout -v -v
@@ -84,10 +84,10 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
 - import\_blastdb\_stats
 
         # options from command line
-        BlastoutAnalyze.pm --mode=import_blastdb_stats -if t/data/analyze_hs_9606_cdhit_large_extracted  -d hs_plus -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+        BlastoutAnalyze.pm --mode=import_blastdb_stats -if t/data/analyze_hs_9606_cdhit_large_extracted  -d hs_plus --names_tbl=names_dmp_fmt_new -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
 
         # options from config
-        BlastoutAnalyze.pm --mode=import_blastdb_stats -if t/data/analyze_hs_9606_cdhit_large_extracted  -d hs_plus -v
+        BlastoutAnalyze.pm --mode=import_blastdb_stats -if t/data/analyze_hs_9606_cdhit_large_extracted  -d hs_plus --names_tbl=names_dmp_fmt_new -v
 
     Imports analyze stats file created by AnalyzePhyloDb.
       AnalysePhyloDb -n /home/msestak/dropbox/Databases/db\_02\_09\_2015/data/nr\_raw/nodes.dmp.fmt.new.sync -d /home/msestak/dropbox/Databases/db\_02\_09\_2015/data/cdhit\_large/extracted/ -t 9606 > analyze\_hs\_9606\_cdhit\_large\_extracted
@@ -146,10 +146,10 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
 - import\_blastout\_full
 
         # options from command line
-        BlastoutAnalyze.pm --mode=import_blastout -if t/data/hs_all_plus_21_12_2015 -d hs_blastout -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+        BlastoutAnalyze.pm --mode=import_blastout_full -if t/data/hs_all_plus_21_12_2015 -d hs_blastout -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
 
         # options from config
-        BlastoutAnalyze.pm --mode=import_blastout -if t/data/hs_all_plus_21_12_2015 -d hs_blastout -v
+        BlastoutAnalyze.pm --mode=import_blastout_full -if t/data/hs_all_plus_21_12_2015 -d hs_blastout -v
 
     Extracts hit column and splits it on ti and pgi and imports this file into MySQL (it has 2 extra columns = ti and pgi with no duplicates). It needs MySQL connection parameters to connect to MySQL.
 
@@ -173,17 +173,21 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
         BlastoutAnalyze.pm --mode=import_blastdb -if t/data/db90_head.gz -d hs_blastout -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
 
         # options from config
+        BlastoutAnalyze.pm --mode=import_blastdb -if /media/SAMSUNG/msestak/dropbox/Databases/db_02_09_2015/data/dbfull.gz -d dbfull -v -v
         BlastoutAnalyze.pm --mode=import_blastdb -if t/data/db90_head.gz -d hs_blastout -v -v
 
     Imports BLAST database file into MySQL (it has 2 extra columns = ti and pgi). It needs MySQL connection parameters to connect to MySQL.
 
-        ... Load (41 min)
-        [2016/04/22 00:41:42,563]TRACE> BlastoutAnalyze::import_blastdb line:1815==>Time running:2460 sec       STATE:Verifying index uniqueness: Checked 43450000 of 0 rows in key-PR
-        [2016/04/22 00:41:52,564] INFO> BlastoutAnalyze::import_blastdb line:1821==>Report: import inserted 43899817 rows!
-        [2016/04/22 00:41:52,567]TRACE> BlastoutAnalyze::import_blastdb line:1843==>Time running:0 sec  STATE:Adding indexes
-        ... Indexing (2 min)
-        [2016/04/22 00:43:52,588] INFO> BlastoutAnalyze::import_blastdb line:1850==>Action: Index tix on db90_gz added successfully!
-        [2016/04/22 00:43:52,590] INFO> BlastoutAnalyze::run line:109==>TIME when finished for: import_blastdb
+        ...load (5 h)
+        [2016/09/26 11:55:46,940]TRACE> BlastoutAnalyze::import_blastdb line:1889==>Time running:3494 sec       STATE:Fetched about 113690000 rows, loading data still remains
+        [2016/09/26 11:55:51,331] WARN> BlastoutAnalyze::import_blastdb line:1833==>Report: file /media/SAMSUNG/msestak/dropbox/Databases/db_02_09_2015/data/dbfull.gz has 113834350 fasta records!
+        [2016/09/26 11:55:51,332] WARN> BlastoutAnalyze::import_blastdb line:1834==>Action: file /media/SAMSUNG/msestak/dropbox/Databases/db_02_09_2015/data/blastdb_named_pipe_2016_9_26_10_57_32 written with 113834350 lines/fasta records!
+        ...
+        [2016/09/26 18:43:38,488]TRACE> BlastoutAnalyze::import_blastdb line:1889==>Time running:17610 sec      STATE:Loading of data about 100.0% done
+        [2016/09/26 18:43:48,506] INFO> BlastoutAnalyze::import_blastdb line:1895==>Report: import inserted 113834350 rows!
+        ...indexing (41 min)
+        [2016/09/26 19:24:19,113]TRACE> BlastoutAnalyze::import_blastdb line:1917==>Time running:2431 sec       STATE:Loading of data about 99.6% done
+        [2016/09/26 19:24:29,114] INFO> BlastoutAnalyze::import_blastdb line:1924==>Action: indices prot_namex and pgix on {dbfull} added successfully!
 
 # CONFIGURATION
 

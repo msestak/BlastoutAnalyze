@@ -1752,177 +1752,186 @@ sub _extract_blastout_full {
 # See Also   : 
 sub import_blastdb {
     my $log = Log::Log4perl::get_logger("main");
-    $log->logcroak( 'import_blastdb() needs a hash_ref' ) unless @_ == 1;
+    $log->logcroak('import_blastdb() needs a hash_ref') unless @_ == 1;
     my ($param_href) = @_;
 
     my $infile = $param_href->{infile} or $log->logcroak('no $infile specified on command line!');
-    my $table  = path($infile)->basename;
-    $table     =~ s/\./_/g;    #for files that have dots in name
-	my $out    = path($infile)->parent;
+    my $table = path($infile)->basename;
+    ($table) = $table =~ m/\A(.+)\.gz\z/;
+    $table =~ s/\./_/g;    #for files that have dots in name
+    my $out = path($infile)->parent;
 
-	# get date for named pipe file naming
-    my $now  = DateTime::Tiny->now;
-    my $date = $now->year . '_' . $now->month . '_' . $now->day . '_' . $now->hour . '_' . $now->minute . '_' . $now->second;
-	
-	# delete pipe if it exists
-	my $load_file = path($out, "blastdb_named_pipe_${date}");   #file for LOAD DATA INFILE
-	if (-p $load_file) {
-		unlink $load_file and $log->trace( "Action: named pipe $load_file removed!" );
-	}
-	#make named pipe
-	mkfifo( $load_file, 0666 ) or $log->logdie( "Error: mkfifo $load_file failed: $!" );
+    # get date for named pipe file naming
+    my $now = DateTime::Tiny->now;
+    my $date
+      = $now->year . '_' . $now->month . '_' . $now->day . '_' . $now->hour . '_' . $now->minute . '_' . $now->second;
 
-	# open blastdb compressed file for reading
-	open my $blastdb_fh, "<:gzip", $infile or $log->logdie( "Can't open gzipped file $infile: $!" );
+    # delete pipe if it exists
+    my $load_file = path( $out, "blastdb_named_pipe_${date}" );    #file for LOAD DATA INFILE
+    if ( -p $load_file ) {
+        unlink $load_file and $log->trace("Action: named pipe $load_file removed!");
+    }
 
-	#start 2 processes (one for Perl-child and MySQL-parent)
+    #make named pipe
+    mkfifo( $load_file, 0666 ) or $log->logdie("Error: mkfifo $load_file failed: $!");
+
+    # open blastdb compressed file for reading
+    open my $blastdb_fh, "<:gzip", $infile or $log->logdie("Can't open gzipped file $infile: $!");
+
+    #start 2 processes (one for Perl-child and MySQL-parent)
     my $pid = fork;
 
-	if (!defined $pid) {
-		$log->logdie( "Error: cannot fork: $!" );
-	}
+    if ( !defined $pid ) {
+        $log->logdie("Error: cannot fork: $!");
+    }
 
-	elsif ($pid == 0) {
-		# Child-client process
-		$log->warn( "Action: Perl-child-client starting..." );
+    elsif ( $pid == 0 ) {
 
-		# open named pipe for writing (gziped file --> named pipe)
-		open my $blastdb_pipe_fh, "+<:encoding(ASCII)", $load_file or die $!;   #+< mode=read and write
-		
-		# define new block for reading blocks of fasta
-		{
-			local $/ = ">pgi";  #look in larger chunks between >gi (solo > found in header so can't use)
-			local $.;           #gzip count
-			my $out_cnt = 0;    #named pipe count
+        # Child-client process
+        $log->warn("Action: Perl-child-client starting...");
 
-			# print to named pipe
-			PIPE:
-			while (<$blastdb_fh>) {
-				chomp;
-				#print $blastdb_pipe_fh "$_";
-				#say '{', $_, '}';
-				next PIPE if $_ eq '';   #first iteration is empty?
-				
-				# extract pgi, prot_name and fasta + fasta
-				my ($prot_id, $prot_name, $fasta) = $_ =~ m{\A([^\t]+)\t([^\n]+)\n(.+)\z}smx;
+        # open named pipe for writing (gziped file --> named pipe)
+        open my $blastdb_pipe_fh, "+<:encoding(ASCII)", $load_file or die $!;    #+< mode=read and write
 
-				#pgi removed as record separator (return it back)
-				$prot_id = 'pgi' . $prot_id;
-		        my ($pgi, $ti) = $prot_id =~ m{pgi\|(\d+)\|ti\|(\d+)\|pi\|(?:\d+)\|};
+        # define new block for reading blocks of fasta
+        {
+            local $/ = ">pgi";    #look in larger chunks between >gi (solo > found in header so can't use)
+            local $.;             #gzip count
+            my $out_cnt = 0;      #named pipe count
 
-				# remove illegal chars from fasta and upercase it
-			    $fasta =~ s/\R//g;      #delete multiple newlines (all vertical and horizontal space)
-				$fasta = uc $fasta;     #uppercase fasta
-			    $fasta =~ tr{A-Z}{}dc;  #delete all special characters (all not in A-Z)
+            # print to named pipe
+          PIPE:
+            while (<$blastdb_fh>) {
+                chomp;
 
-				# print to pipe
-				print {$blastdb_pipe_fh} "$prot_id\t$pgi\t$ti\t$prot_name\t$fasta\n";
-				$out_cnt++;
+                #print $blastdb_pipe_fh "$_";
+                #say '{', $_, '}';
+                next PIPE if $_ eq '';    #first iteration is empty?
 
-				#progress tracker for blastdb file
-				if ($. % 1000000 == 0) {
-					$log->trace( "$. lines processed!" );
-				}
-			}
-			my $blastdb_file_line_cnt = $. - 1;   #first line read empty (don't know why)
-			$log->warn( "Report: file $infile has $blastdb_file_line_cnt fasta records!" );
-			$log->warn( "Action: file $load_file written with $out_cnt lines/fasta records!" );
-		}   #END block writing to pipe
+                # extract pgi, prot_name and fasta + fasta
+                my ( $prot_id, $prot_name, $fasta ) = $_ =~ m{\A([^\t]+)\t([^\n]+)\n(.+)\z}smx;
 
-		$log->warn( "Action: Perl-child-client terminating :)" );
-		exit 0;
-	}
-	else {
-		# MySQL-parent process
-		$log->warn( "Action: MySQL-parent process, waiting for child..." );
-		
-		# SECOND PART: loading named pipe into db
-		my $database = $param_href->{database}    or $log->logcroak( 'no $database specified on command line!' );
-		
-		# get new handle
-    	my $dbh = _dbi_connect($param_href);
+                #pgi removed as record separator (return it back)
+                $prot_id = 'pgi' . $prot_id;
+                my ( $pgi, $ti ) = $prot_id =~ m{pgi\|(\d+)\|ti\|(\d+)\|pi\|(?:\d+)\|};
 
-    	# create a table to load into
-    	my $create_query = sprintf( qq{
-    	CREATE TABLE %s (
-    	prot_id VARCHAR(40) NOT NULL,
+                # remove illegal chars from fasta and upercase it
+                $fasta =~ s/\R//g;        #delete multiple newlines (all vertical and horizontal space)
+                $fasta = uc $fasta;       #uppercase fasta
+                $fasta =~ tr{A-Z}{}dc;    #delete all special characters (all not in A-Z)
+
+                # print to pipe
+                print {$blastdb_pipe_fh} "$prot_id\t$pgi\t$ti\t$prot_name\t$fasta\n";
+                $out_cnt++;
+
+                #progress tracker for blastdb file
+                if ( $. % 1000000 == 0 ) {
+                    $log->trace("$. lines processed!");
+                }
+            }
+            my $blastdb_file_line_cnt = $. - 1;    #first line read empty (don't know why)
+            $log->warn("Report: file $infile has $blastdb_file_line_cnt fasta records!");
+            $log->warn("Action: file $load_file written with $out_cnt lines/fasta records!");
+        }    #END block writing to pipe
+
+        $log->warn("Action: Perl-child-client terminating :)");
+        exit 0;
+    }
+    else {
+        # MySQL-parent process
+        $log->warn("Action: MySQL-parent process, waiting for child...");
+
+        # SECOND PART: loading named pipe into db
+        my $database = $param_href->{database} or $log->logcroak('no $database specified on command line!');
+
+        # get new handle
+        my $dbh = _dbi_connect($param_href);
+
+        # create a table to load into
+        my $create_query = sprintf(
+            qq{
+        CREATE TABLE %s (
+        id INT UNSIGNED AUTO_INCREMENT NOT NULL,
+        prot_id VARCHAR(40) NOT NULL,
         pgi CHAR(19) NOT NULL,
-		ti INT UNSIGNED NOT NULL,
-    	prot_name VARCHAR(200) NOT NULL,
-    	fasta MEDIUMTEXT NOT NULL,
-    	PRIMARY KEY(pgi)
-    	)}, $dbh->quote_identifier($table) );
-		_create_table( { table_name => $table, dbh => $dbh, query => $create_query, %{$param_href} } );
-		$log->trace("Report: $create_query");
+        ti INT UNSIGNED NOT NULL,
+        prot_name VARCHAR(200) NOT NULL,
+        fasta MEDIUMTEXT NOT NULL,
+        PRIMARY KEY(ti, id)
+        )ENGINE=TokuDB}, $dbh->quote_identifier($table)
+        );
+        _create_table( { table_name => $table, dbh => $dbh, query => $create_query, %{$param_href} } );
+        $log->trace("Report: $create_query");
 
-		#import table
-    	my $load_query = qq{
-    	LOAD DATA INFILE '$load_file'
-    	INTO TABLE $table } . q{ FIELDS TERMINATED BY '\t'
-    	LINES TERMINATED BY '\n'
-    	};
-    	eval { $dbh->do( $load_query, { async => 1 } ) };
+        #import table
+        my $load_query = qq{
+        LOAD DATA INFILE '$load_file'
+        INTO TABLE $table } . q{ FIELDS TERMINATED BY '\t'
+        LINES TERMINATED BY '\n'
+        (prot_id, pgi, ti, prot_name, fasta)
+        };
+        eval { $dbh->do( $load_query, { async => 1 } ) };
 
-    	#check status while running LOAD DATA INFILE
-    	{    
-    	    my $dbh_check         = _dbi_connect($param_href);
-    	    until ( $dbh->mysql_async_ready ) {
-				my $processlist_query = qq{
-					SELECT TIME, STATE FROM INFORMATION_SCHEMA.PROCESSLIST
-					WHERE DB = ? AND INFO LIKE 'LOAD DATA INFILE%';
-					};
-    	        my $sth = $dbh_check->prepare($processlist_query);
-    	        $sth->execute($database);
-    	        my ( $time, $state );
-    	        $sth->bind_columns( \( $time, $state ) );
-    	        while ( $sth->fetchrow_arrayref ) {
-    	            my $process = sprintf( "Time running:%d sec\tSTATE:%s\n", $time, $state );
-    	            $log->trace( $process );
-    	            sleep 10;
-    	        }
-    	    }
-    	}    #end check LOAD DATA INFILE
-    	my $rows = $dbh->mysql_async_result;
-    	$log->info( "Report: import inserted $rows rows!" );
-    	$log->error( "Report: loading $table failed: $@" ) if $@;
+        #check status while running LOAD DATA INFILE
+        {
+            my $dbh_check = _dbi_connect($param_href);
+            until ( $dbh->mysql_async_ready ) {
+                my $processlist_query = qq{
+                SELECT TIME, STATE FROM INFORMATION_SCHEMA.PROCESSLIST
+                WHERE DB = ? AND INFO LIKE 'LOAD DATA INFILE%';
+                };
+                my $sth = $dbh_check->prepare($processlist_query);
+                $sth->execute($database);
+                my ( $time, $state );
+                $sth->bind_columns( \( $time, $state ) );
+                while ( $sth->fetchrow_arrayref ) {
+                    my $process = sprintf( "Time running:%d sec\tSTATE:%s\n", $time, $state );
+                    $log->trace($process);
+                    sleep 10;
+                }
+            }
+        }    #end check LOAD DATA INFILE
+        my $rows = $dbh->mysql_async_result;
+        $log->info("Report: import inserted $rows rows!");
+        $log->error("Report: loading $table failed: $@") if $@;
 
-		# add index
-	    my $alter_query = qq{
-	    ALTER TABLE $table ADD INDEX tix(ti)
-	    };
-	    eval { $dbh->do( $alter_query, { async => 1 } ) };
-	
-	    # check status while running
-	    my $dbh_check2            = _dbi_connect($param_href);
-	    until ( $dbh->mysql_async_ready ) {
-	        my $processlist_query = qq{
-	        SELECT TIME, STATE FROM INFORMATION_SCHEMA.PROCESSLIST
-	        WHERE DB = ? AND INFO LIKE 'ALTER%';
-	        };
-	        my ( $time, $state );
-	        my $sth = $dbh_check2->prepare($processlist_query);
-	        $sth->execute($param_href->{database});
-	        $sth->bind_columns( \( $time, $state ) );
-	        while ( $sth->fetchrow_arrayref ) {
-	            my $print = sprintf( "Time running:%d sec\tSTATE:%s\n", $time, $state );
-	            $log->trace( $print );
-	            sleep 10;
-	        }
-	    }
-	
-	    #report success or failure
-	    $log->error( "Error: adding index tix on $table failed: $@" ) if $@;
-	    $log->info( "Action: Index tix on $table added successfully!" ) unless $@;
+        # add index
+        my $alter_query = qq{
+        ALTER TABLE $table ADD INDEX prot_namex(prot_name), ADD INDEX pgix(pgi)
+        };
+        eval { $dbh->do( $alter_query, { async => 1 } ) };
 
-		$dbh->disconnect;
+        # check status while running
+        my $dbh_check2 = _dbi_connect($param_href);
+        until ( $dbh->mysql_async_ready ) {
+            my $processlist_query = qq{
+            SELECT TIME, STATE FROM INFORMATION_SCHEMA.PROCESSLIST
+            WHERE DB = ? AND INFO LIKE 'ALTER%';
+            };
+            my ( $time, $state );
+            my $sth = $dbh_check2->prepare($processlist_query);
+            $sth->execute( $param_href->{database} );
+            $sth->bind_columns( \( $time, $state ) );
+            while ( $sth->fetchrow_arrayref ) {
+                my $print = sprintf( "Time running:%d sec\tSTATE:%s\n", $time, $state );
+                $log->trace($print);
+                sleep 10;
+            }
+        }
 
-		# communicate with child process
-		waitpid $pid, 0;
-	}
-	$log->warn( "MySQL-parent process end after child has finished" );
-		unlink $load_file and $log->warn( "Action: named pipe $load_file removed!" );
+        #report success or failure
+        $log->error("Error: adding indices prot_namex and pgix on {$table} failed: $@") if $@;
+        $log->info("Action: indices prot_namex and pgix on {$table} added successfully!") unless $@;
 
-	return;
+        $dbh->disconnect;
+
+        # communicate with child process
+        waitpid $pid, 0;
+    }
+    $log->warn("MySQL-parent process end after child has finished");
+    unlink $load_file and $log->warn("Action: named pipe $load_file removed!");
+
+    return;
 }
 
 
@@ -2112,17 +2121,21 @@ Extracts hit column and splits it on ti and pgi and imports this file into MySQL
  BlastoutAnalyze.pm --mode=import_blastdb -if t/data/db90_head.gz -d hs_blastout -v -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
 
  # options from config
+ BlastoutAnalyze.pm --mode=import_blastdb -if /media/SAMSUNG/msestak/dropbox/Databases/db_02_09_2015/data/dbfull.gz -d dbfull -v -v
  BlastoutAnalyze.pm --mode=import_blastdb -if t/data/db90_head.gz -d hs_blastout -v -v
 
 Imports BLAST database file into MySQL (it has 2 extra columns = ti and pgi). It needs MySQL connection parameters to connect to MySQL.
 
- ... Load (41 min)
- [2016/04/22 00:41:42,563]TRACE> BlastoutAnalyze::import_blastdb line:1815==>Time running:2460 sec       STATE:Verifying index uniqueness: Checked 43450000 of 0 rows in key-PR
- [2016/04/22 00:41:52,564] INFO> BlastoutAnalyze::import_blastdb line:1821==>Report: import inserted 43899817 rows!
- [2016/04/22 00:41:52,567]TRACE> BlastoutAnalyze::import_blastdb line:1843==>Time running:0 sec  STATE:Adding indexes
- ... Indexing (2 min)
- [2016/04/22 00:43:52,588] INFO> BlastoutAnalyze::import_blastdb line:1850==>Action: Index tix on db90_gz added successfully!
- [2016/04/22 00:43:52,590] INFO> BlastoutAnalyze::run line:109==>TIME when finished for: import_blastdb
+ ...load (5 h)
+ [2016/09/26 11:55:46,940]TRACE> BlastoutAnalyze::import_blastdb line:1889==>Time running:3494 sec       STATE:Fetched about 113690000 rows, loading data still remains
+ [2016/09/26 11:55:51,331] WARN> BlastoutAnalyze::import_blastdb line:1833==>Report: file /media/SAMSUNG/msestak/dropbox/Databases/db_02_09_2015/data/dbfull.gz has 113834350 fasta records!
+ [2016/09/26 11:55:51,332] WARN> BlastoutAnalyze::import_blastdb line:1834==>Action: file /media/SAMSUNG/msestak/dropbox/Databases/db_02_09_2015/data/blastdb_named_pipe_2016_9_26_10_57_32 written with 113834350 lines/fasta records!
+ ...
+ [2016/09/26 18:43:38,488]TRACE> BlastoutAnalyze::import_blastdb line:1889==>Time running:17610 sec      STATE:Loading of data about 100.0% done
+ [2016/09/26 18:43:48,506] INFO> BlastoutAnalyze::import_blastdb line:1895==>Report: import inserted 113834350 rows!
+ ...indexing (41 min)
+ [2016/09/26 19:24:19,113]TRACE> BlastoutAnalyze::import_blastdb line:1917==>Time running:2431 sec       STATE:Loading of data about 99.6% done
+ [2016/09/26 19:24:29,114] INFO> BlastoutAnalyze::import_blastdb line:1924==>Action: indices prot_namex and pgix on {dbfull} added successfully!
 
 =back
 
