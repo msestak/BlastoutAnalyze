@@ -25,6 +25,7 @@ my @subs = qw(
   exclude_ti_from_blastout
   import_blastout_full
   import_blastdb
+  import_reports
 );
 
 use_ok( $module, @subs);

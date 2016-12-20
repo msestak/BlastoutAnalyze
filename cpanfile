@@ -25,6 +25,7 @@ requires 'DBD::mysql';
 requires 'Config::Std';
 requires 'DateTime::Tiny';
 requires 'POSIX';
+requires 'Parallel::ForkManager';
 
 author_requires 'Term::ReadKey';
 author_requires 'Regexp::Debugger';

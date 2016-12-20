@@ -189,6 +189,16 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
         [2016/09/26 19:24:19,113]TRACE> BlastoutAnalyze::import_blastdb line:1917==>Time running:2431 sec       STATE:Loading of data about 99.6% done
         [2016/09/26 19:24:29,114] INFO> BlastoutAnalyze::import_blastdb line:1924==>Action: indices prot_namex and pgix on {dbfull} added successfully!
 
+- import\_reports
+
+        # options from command line
+        BlastoutAnalyze.pm --mode=import_reports --in t/data/ -d origin --max_processes=4 -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+
+        # options from config
+        BlastoutAnalyze.pm --mode=import_reports --in t/data/ -d origin --max_processes=4
+
+    Imports expanded reports per species in BLAST database into MySQL. It can import in parallel. It needs MySQL connection parameters to connect to MySQL.
+
 # CONFIGURATION
 
 All configuration in set in blastoutanalyze.cnf that is found in ./lib directory (it can also be set with --config option on command line). It follows [Config::Std](https://metacpan.org/pod/Config::Std) format and rules.

@@ -20,6 +20,7 @@ use DBI;
 use DBD::mysql;
 use DateTime::Tiny;
 use POSIX qw(mkfifo);
+use Parallel::ForkManager;
 
 our $VERSION = "0.01";
 
@@ -43,7 +44,7 @@ our @EXPORT_OK = qw{
   exclude_ti_from_blastout
   import_blastout_full
   import_blastdb
-
+  import_reports
 };
 
 #MODULINO - works with debugger too
@@ -97,6 +98,7 @@ sub run {
 		exclude_ti_from_blastout => \&exclude_ti_from_blastout,   # excludes specific tax_id from BLAST output file
         import_blastout_full => \&import_blastout_full,   # import BLAST output with all columns
         import_blastdb       => \&import_blastdb,         # import BLAST database with all columns
+        import_reports       => \&import_reports,         # import expanded reports
 
     );
 
@@ -189,6 +191,7 @@ sub get_parameters_from_cmd {
 		'analyze_genomes=s' => \$cli{analyze_genomes},
 		'report_per_ps=s' => \$cli{report_per_ps},
         'tax_id|ti=i'   => \$cli{tax_id},
+        'max_processes=i' => \$cli{max_processes},
 
         'host|ho=s'      => \$cli{host},
         'database|d=s'  => \$cli{database},
@@ -1935,6 +1938,270 @@ sub import_blastdb {
 }
 
 
+### INTERFACE SUB ###
+# Usage      : import_reports( $param_href );
+# Purpose    : to import expanded reports per species into MySQL database
+# Returns    : nothing
+# Parameters : 
+# Throws     : croaks if wrong number of parameters
+# Comments   : files are exported from ClickHouse and in gzip format
+# See Also   : 
+sub import_reports {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('import_reports() needs a $param_href') unless @_ == 1;
+    my ($param_href) = @_;
+
+    my $in = $param_href->{in} or $log->logcroak('no $in specified on command line!');
+    my $max_processes = defined $param_href->{max_processes} ? $param_href->{max_processes} : 1;
+
+    # collect expanded files
+    my @exp_files = File::Find::Rule->file()->name('*good_report_per_species_expanded.TabSeparated.gz')->in($in);
+    @exp_files = sort { $a cmp $b } @exp_files;
+    my $exp_files_print = sprintf( Data::Dumper->Dump( [ \@exp_files ], [qw(*report_expanded_files)] ) );
+    $log->debug("$exp_files_print");
+
+    # helping hash to remember tis
+    my %name_ti_pair = (
+        ac  => 1257118,
+        ag  => 936046,
+        am  => 7460,
+        an  => 28377,
+        aq  => 400682,
+        at  => 13333,
+        ath => 3702,
+        bd  => 684364,
+        bm  => 7091,
+        ce  => 6239,
+        cg  => 29159,
+        ci  => 7719,
+        co  => 595528,
+        dd  => 352472,
+        dm  => 7227,
+        dp  => 6669,
+        dr  => 7955,
+        ec  => 284813,
+        eh  => 280463,
+        gg  => 9031,
+        gl  => 184922,
+        gt  => 905079,
+        hs  => 9606,
+        lc  => 7897,
+        lm  => 347515,
+        mb  => 431895,
+        ml  => 27923,
+        mm  => 10090,
+        mo  => 242507,
+        nv  => 45351,
+        os  => 39947,
+        pf  => 36329,
+        pi  => 403677,
+        pm  => 7757,
+        pop => 3694,
+        pp  => 3218,
+        pt  => 5888,
+        sc  => 4932,
+        sl  => 4081,
+        sm  => 88036,
+        sp  => 7668,
+        spo => 284812,
+        str => 126957,
+        tv  => 412133,
+        vv  => 29760,
+        xt  => 8364,
+        zm  => 4577,
+    );
+
+    $log->info("Report: parent PID $$ forking $max_processes processes");
+    my $pm = Parallel::ForkManager->new($max_processes);
+
+  LOOP:
+    foreach my $exp (@exp_files) {
+        my $exp_name = path($exp)->basename;
+        ( my $organism ) = $exp_name =~ m/\A.+?\.(.+?)\_.+\z/;
+
+        #make the fork
+        my $pid = $pm->start and next LOOP;
+
+        my $start = time;
+
+        # create named pipe and extract into it (save space)
+        my $load_pipe = path( $in, "${organism}_pipe" );
+        unlink $load_pipe if -e $load_pipe;
+        mkfifo( $load_pipe, 0666 ) or log->logdie("Error: mkfifo $load_pipe failed: $!");
+
+        # extract to pipe
+        my $cmd_gz = qq{pigz -c -d $exp > $load_pipe &};
+        say "CMD:$cmd_gz";
+        system($cmd_gz) and $log->logdie("Error: can't extract $exp to $load_pipe:$!");
+
+        # now create table and load into it
+        my $exp_tbl = _load_exp_into_db( { org => $organism, pipe => $load_pipe, %{$param_href} } );
+
+        # update support table
+        my $dbh      = _dbi_connect($param_href);
+        my $update_q = qq{
+	    UPDATE $param_href->{database}.support
+        SET report_expanded = '$exp_name', report_expanded_tbl = '$exp_tbl'
+        WHERE ti = $name_ti_pair{$organism} };
+
+        my $rows;
+        eval { $rows = $dbh->do($update_q) };
+        $log->info("Report: updated $rows rows for organism: $organism!");
+        $log->error("Report: updating support table for organism: $organism failed: $@") if $@;
+
+        # delete pipe
+        unlink $load_pipe if -e $load_pipe;
+
+        # update expanded table
+        _update_exp_tbl( { exp_tbl => $exp_tbl, %{$param_href} } );
+
+        $pm->finish;    # Terminates the child process
+    }
+    $pm->wait_all_children;
+
+    return;
+}
+
+
+### INTERNAL UTILITY ###
+# Usage      : my $exp_tbl = _load_exp_into_db( { org => $organism, pipe => $load_pipe, %{$param_href} } );
+# Purpose    : create table, load into it from MySQL
+# Returns    : name of expanded table
+# Parameters : 
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : 
+sub _load_exp_into_db {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_load_exp_into_db() needs a $param_href') unless @_ == 1;
+    my ($param_href) = @_;
+
+    my $database = $param_href->{database} or $log->logcroak('no $database specified on command line!');
+
+    # get new handle
+    my $dbh     = _dbi_connect($param_href);
+    my $exp_tbl = "$param_href->{org}_report_per_species_expanded";
+
+    # create a table to load into
+    my $create_query = sprintf(
+        qq{
+    CREATE TABLE %s (
+    ps TINYINT UNSIGNED NOT NULL,
+    ti INT UNSIGNED NOT NULL,
+    species_name VARCHAR(200) NOT NULL,
+    gene_hits_per_species INT UNSIGNED NOT NULL,
+    hits1 INT UNSIGNED NOT NULL,
+    hits2 INT UNSIGNED NOT NULL,
+    hits3 INT UNSIGNED NOT NULL,
+    hits4 INT UNSIGNED NOT NULL,
+    hits5 INT UNSIGNED NOT NULL,
+    hits6 INT UNSIGNED NOT NULL,
+    hits7 INT UNSIGNED NOT NULL,
+    hits8 INT UNSIGNED NOT NULL,
+    hits9 INT UNSIGNED NOT NULL,
+    hits10 INT UNSIGNED NOT NULL,
+    PRIMARY KEY(ti),
+    KEY(species_name)
+    )}, $dbh->quote_identifier($exp_tbl)
+    );
+    _create_table( { table_name => $exp_tbl, dbh => $dbh, query => $create_query, %{$param_href} } );
+    $log->trace("Report: $create_query");
+
+    #import table
+    my $load_query = qq{
+    LOAD DATA INFILE '$param_href->{pipe}'
+    INTO TABLE $exp_tbl } . q{ FIELDS TERMINATED BY '\t'
+    LINES TERMINATED BY '\n'
+    (ps, ti,  species_name,  gene_hits_per_species,  @dummy,
+    hits1, hits2,  hits3, hits4, hits5,  hits6,  hits7,  hits8,  hits9,  hits10,
+    @dummy, @dummy, @dummy, @dummy, @dummy, @dummy, @dummy, @dummy, @dummy, @dummy, @dummy)
+    };
+    my $rows;
+    eval { $rows = $dbh->do($load_query) };
+
+    $log->info("Report: import inserted $rows rows!");
+    $log->error("Report: loading $exp_tbl failed: $@") if $@;
+
+    return $exp_tbl;
+}
+
+
+### INTERNAL UTILITY ###
+# Usage      : _update_exp_tbl( $param_href );
+# Purpose    : update expanded table with domains
+# Returns    : nothing
+# Parameters : 
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : 
+sub _update_exp_tbl {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_update_exp_tbl() needs a $param_href') unless @_ == 1;
+    my ($param_href) = @_;
+
+    my $dbh = _dbi_connect($param_href);
+
+    # delete all not in ps1
+    my $del_q = qq{
+    DELETE exp FROM $param_href->{exp_tbl} AS exp
+    WHERE ps NOT IN (1) };
+    $log->trace("Report: $del_q");
+    my $rows_del;
+    eval { $rows_del = $dbh->do($del_q) };
+
+    $log->info("Report: deleted all but ps1 from $param_href->{exp_tbl}");
+    $log->error("Report: deleting all but ps1 from $param_href->{exp_tbl} failed: $@") if $@;
+
+    # alter table add domain column
+    my $alter_q = qq{
+    ALTER TABLE $param_href->{exp_tbl} ADD COLUMN domain VARCHAR(20) };
+    $log->trace("Report: $alter_q");
+    eval { $dbh->do($alter_q) };
+
+    $log->info("Report: added domain column to table $param_href->{exp_tbl}");
+    $log->error("Report: altering table $param_href->{exp_tbl} failed: $@") if $@;
+
+    # update exp_table with archaea
+    my $update_archaea = qq{
+    UPDATE $param_href->{exp_tbl} AS exp
+    INNER JOIN archea AS kin ON exp.ti = kin.ti
+    SET exp.domain = 'Archaea' };
+    $log->trace("Report: $update_archaea");
+    my $rows_a;
+    eval { $rows_a = $dbh->do($update_archaea) };
+
+    $log->info("Report: updated $rows_a Archaea species in $param_href->{exp_tbl}");
+    $log->error("Report: updating Archaea species in $param_href->{exp_tbl} failed: $@") if $@;
+
+    # update exp_table with cyanobacteria
+    my $update_cyanobacteria = qq{
+    UPDATE $param_href->{exp_tbl} AS exp
+    INNER JOIN cyanobacteria AS kin ON exp.ti = kin.ti
+    SET exp.domain = 'Cyanobacteria' };
+    $log->trace("Report: $update_cyanobacteria");
+    my $rows_c;
+    eval { $rows_c = $dbh->do($update_cyanobacteria) };
+
+    $log->info("Report: updated $rows_c Cyanobacteria species in $param_href->{exp_tbl}");
+    $log->error("Report: updating Cyanobacteria species in $param_href->{exp_tbl} failed: $@") if $@;
+
+    # update exp_table with archaea
+    my $update_bacteria = qq{
+    UPDATE $param_href->{exp_tbl} AS exp
+    INNER JOIN bacteria AS kin ON exp.ti = kin.ti
+    SET exp.domain = 'Bacteria' };
+    $log->trace("Report: $update_bacteria");
+    my $rows_b;
+    eval { $rows_b = $dbh->do($update_bacteria) };
+
+    $log->info("Report: updated $rows_b Bacteria species in $param_href->{exp_tbl}");
+    $log->error("Report: updating Bacteria species in $param_href->{exp_tbl} failed: $@") if $@;
+
+    return;
+}
+
+
+
 
 1;
 __END__
@@ -2136,6 +2403,17 @@ Imports BLAST database file into MySQL (it has 2 extra columns = ti and pgi). It
  ...indexing (41 min)
  [2016/09/26 19:24:19,113]TRACE> BlastoutAnalyze::import_blastdb line:1917==>Time running:2431 sec       STATE:Loading of data about 99.6% done
  [2016/09/26 19:24:29,114] INFO> BlastoutAnalyze::import_blastdb line:1924==>Action: indices prot_namex and pgix on {dbfull} added successfully!
+
+=item import_reports
+
+ # options from command line
+ BlastoutAnalyze.pm --mode=import_reports --in t/data/ -d origin --max_processes=4 -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+
+ # options from config
+ BlastoutAnalyze.pm --mode=import_reports --in t/data/ -d origin --max_processes=4
+
+Imports expanded reports per species in BLAST database into MySQL. It can import in parallel. It needs MySQL connection parameters to connect to MySQL.
+
 
 =back
 
