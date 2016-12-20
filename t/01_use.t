@@ -26,6 +26,7 @@ my @subs = qw(
   import_blastout_full
   import_blastdb
   import_reports
+  top_hits
 );
 
 use_ok( $module, @subs);

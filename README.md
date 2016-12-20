@@ -37,6 +37,12 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
     # import full BLAST database (plus ti and pgi columns)
     BlastoutAnalyze.pm --mode=import_blastdb -if t/data/db90_head.gz -d hs_blastout -v -v
 
+    # import expanded reports into database
+    BlastoutAnalyze.pm --mode=import_reports --in t/data/ -d origin --max_processes=4
+
+    # find top N species with most BLAST hits (proteins found) in prokaryotes per domain (Archaea, Cyanobacteria, Bacteria)
+    FindOrigin.pm --mode=top_hits -d kam --top_hits=10
+
 # DESCRIPTION
 
 BlastoutAnalyze is modulino used to analyze BLAST database (to get content in genomes and sequences) and BLAST output (to figure out wwhere are hits comming from). It includes config, command-line and logging management.
@@ -198,6 +204,13 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
         BlastoutAnalyze.pm --mode=import_reports --in t/data/ -d origin --max_processes=4
 
     Imports expanded reports per species in BLAST database into MySQL. It can import in parallel. It needs MySQL connection parameters to connect to MySQL.
+
+- top\_hits
+
+        # find N top hits for all species per domain in a database
+        FindOrigin.pm --mode=top_hits -d kam --top_hits=10
+
+    It finds top N species with most BLAST hits (proteins found) in prokaryotes per domain (Archaea, Cyanobacteria, Bacteria).
 
 # CONFIGURATION
 

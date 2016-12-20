@@ -45,6 +45,7 @@ our @EXPORT_OK = qw{
   import_blastout_full
   import_blastdb
   import_reports
+  top_hits
 };
 
 #MODULINO - works with debugger too
@@ -99,6 +100,7 @@ sub run {
         import_blastout_full => \&import_blastout_full,   # import BLAST output with all columns
         import_blastdb       => \&import_blastdb,         # import BLAST database with all columns
         import_reports       => \&import_reports,         # import expanded reports
+        top_hits             => \&top_hits,               # create top N hits based on number of genes per domain
 
     );
 
@@ -130,150 +132,161 @@ sub run {
 sub get_parameters_from_cmd {
 
     #no logger here
-	# setup config file location
-	my ($volume, $dir_out, $perl_script) = splitpath( $0 );
-	$dir_out = rel2abs($dir_out);
+    # setup config file location
+    my ( $volume, $dir_out, $perl_script ) = splitpath($0);
+    $dir_out = rel2abs($dir_out);
     my ($app_name) = $perl_script =~ m{\A(.+)\.(?:.+)\z};
-	$app_name = lc $app_name;
-    my $config_file = catfile($volume, $dir_out, $app_name . '.cnf' );
-	$config_file = canonpath($config_file);
+    $app_name = lc $app_name;
+    my $config_file = catfile( $volume, $dir_out, $app_name . '.cnf' );
+    $config_file = canonpath($config_file);
 
-	#read config to setup defaults
-	read_config($config_file => my %config);
-	#p(%config);
-	my $config_ps_href = $config{PS};
-	#p($config_ps_href);
-	my $config_ti_href = $config{TI};
-	#p($config_ti_href);
-	my $config_psname_href = $config{PSNAME};
+    #read config to setup defaults
+    read_config( $config_file => my %config );
 
-	#push all options into one hash no matter the section
-	my %opts;
-	foreach my $key (keys %config) {
-		# don't expand PS, TI or PSNAME
-		next if ( ($key eq 'PS') or ($key eq 'TI') or ($key eq 'PSNAME') );
-		# expand all other options
-		%opts = (%opts, %{ $config{$key} });
-	}
+    #p(%config);
+    my $config_ps_href = $config{PS};
 
-	# put config location to %opts
-	$opts{config} = $config_file;
+    #p($config_ps_href);
+    my $config_ti_href = $config{TI};
 
-	# put PS and TI section to %opts
-	$opts{ps} = $config_ps_href;
-	$opts{ti} = $config_ti_href;
-	$opts{psname} = $config_psname_href;
+    #p($config_ti_href);
+    my $config_psname_href = $config{PSNAME};
 
-	#cli part
-	my @arg_copy = @ARGV;
-	my (%cli, @mode);
-	$cli{quiet} = 0;
-	$cli{verbose} = 0;
-	$cli{argv} = \@arg_copy;
+    #push all options into one hash no matter the section
+    my %opts;
+    foreach my $key ( keys %config ) {
 
-	#mode, quiet and verbose can only be set on command line
+        # don't expand PS, TI or PSNAME
+        next if ( ( $key eq 'PS' ) or ( $key eq 'TI' ) or ( $key eq 'PSNAME' ) );
+
+        # expand all other options
+        %opts = ( %opts, %{ $config{$key} } );
+    }
+
+    # put config location to %opts
+    $opts{config} = $config_file;
+
+    # put PS and TI section to %opts
+    $opts{ps}     = $config_ps_href;
+    $opts{ti}     = $config_ti_href;
+    $opts{psname} = $config_psname_href;
+
+    #cli part
+    my @arg_copy = @ARGV;
+    my ( %cli, @mode );
+    $cli{quiet}   = 0;
+    $cli{verbose} = 0;
+    $cli{argv}    = \@arg_copy;
+
+    #mode, quiet and verbose can only be set on command line
     GetOptions(
-        'help|h'        => \$cli{help},
-        'man|m'         => \$cli{man},
-        'config|cnf=s'  => \$cli{config},
-        'in|i=s'        => \$cli{in},
-        'infile|if=s'   => \$cli{infile},
-        'out|o=s'       => \$cli{out},
-        'outfile|of=s'  => \$cli{outfile},
+        'help|h'       => \$cli{help},
+        'man|m'        => \$cli{man},
+        'config|cnf=s' => \$cli{config},
+        'in|i=s'       => \$cli{in},
+        'infile|if=s'  => \$cli{infile},
+        'out|o=s'      => \$cli{out},
+        'outfile|of=s' => \$cli{outfile},
 
-        'nodes|no=s'    => \$cli{nodes},
-        'names|na=s'    => \$cli{names},
-        'names_tbl=s'    => \$cli{names_tbl},
-		'blastout=s'    => \$cli{blastout},
-		'blastout_analysis=s' => \$cli{blastout_analysis},
-		'map=s'         => \$cli{map},
-		'analyze_ps=s'  => \$cli{analyze_ps},
-		'analyze_genomes=s' => \$cli{analyze_genomes},
-		'report_per_ps=s' => \$cli{report_per_ps},
-        'tax_id|ti=i'   => \$cli{tax_id},
-        'max_processes=i' => \$cli{max_processes},
+        'nodes|no=s'          => \$cli{nodes},
+        'names|na=s'          => \$cli{names},
+        'names_tbl=s'         => \$cli{names_tbl},
+        'blastout=s'          => \$cli{blastout},
+        'blastout_analysis=s' => \$cli{blastout_analysis},
+        'map=s'               => \$cli{map},
+        'analyze_ps=s'        => \$cli{analyze_ps},
+        'analyze_genomes=s'   => \$cli{analyze_genomes},
+        'report_per_ps=s'     => \$cli{report_per_ps},
+        'tax_id|ti=i'         => \$cli{tax_id},
+        'max_processes=i'     => \$cli{max_processes},
 
-        'host|ho=s'      => \$cli{host},
-        'database|d=s'  => \$cli{database},
-        'user|u=s'      => \$cli{user},
-        'password|p=s'  => \$cli{password},
-        'port|po=i'     => \$cli{port},
-        'socket|s=s'    => \$cli{socket},
+        # top hits
+        'top_hits=i' => \$cli{top_hits},
+
+        # database parameters
+        'host|ho=s'    => \$cli{host},
+        'database|d=s' => \$cli{database},
+        'user|u=s'     => \$cli{user},
+        'password|p=s' => \$cli{password},
+        'port|po=i'    => \$cli{port},
+        'socket|s=s'   => \$cli{socket},
 
         'mode|mo=s{1,}' => \$cli{mode},       #accepts 1 or more arguments
         'quiet|q'       => \$cli{quiet},      #flag
         'verbose+'      => \$cli{verbose},    #flag
     ) or pod2usage( -verbose => 1 );
 
-	# help and man
-	pod2usage( -verbose => 1 ) if $cli{help};
-	pod2usage( -verbose => 2 ) if $cli{man};
+    # help and man
+    pod2usage( -verbose => 1 ) if $cli{help};
+    pod2usage( -verbose => 2 ) if $cli{man};
 
-	#you can specify multiple modes at the same time
-	@mode = split( /,/, $cli{mode} );
-	$cli{mode} = \@mode;
-	die 'No mode specified on command line' unless $cli{mode};   #DIES here if without mode
-	
-	#if not -q or --quiet print all this (else be quiet)
-	if ($cli{quiet} == 0) {
-		#print STDERR 'My @ARGV: {', join( "} {", @arg_copy ), '}', "\n";
-		#no warnings 'uninitialized';
-		#print STDERR "Extra options from config:", Dumper(\%opts);
-	
-		if ($cli{in}) {
-			say 'My input path: ', canonpath($cli{in});
-			$cli{in} = rel2abs($cli{in});
-			$cli{in} = canonpath($cli{in});
-			say "My absolute input path: $cli{in}";
-		}
-		if ($cli{infile}) {
-			say 'My input file: ', canonpath($cli{infile});
-			$cli{infile} = rel2abs($cli{infile});
-			$cli{infile} = canonpath($cli{infile});
-			say "My absolute input file: $cli{infile}";
-		}
-		if ($cli{out}) {
-			say 'My output path: ', canonpath($cli{out});
-			$cli{out} = rel2abs($cli{out});
-			$cli{out} = canonpath($cli{out});
-			say "My absolute output path: $cli{out}";
-		}
-		if ($cli{outfile}) {
-			say 'My outfile: ', canonpath($cli{outfile});
-			$cli{outfile} = rel2abs($cli{outfile});
-			$cli{outfile} = canonpath($cli{outfile});
-			say "My absolute outfile: $cli{outfile}";
-		}
-	}
-	else {
-		$cli{verbose} = -1;   #and logging is OFF
+    #you can specify multiple modes at the same time
+    @mode = split( /,/, $cli{mode} );
+    $cli{mode} = \@mode;
+    die 'No mode specified on command line' unless $cli{mode};    #DIES here if without mode
 
-		if ($cli{in}) {
-			$cli{in} = rel2abs($cli{in});
-			$cli{in} = canonpath($cli{in});
-		}
-		if ($cli{infile}) {
-			$cli{infile} = rel2abs($cli{infile});
-			$cli{infile} = canonpath($cli{infile});
-		}
-		if ($cli{out}) {
-			$cli{out} = rel2abs($cli{out});
-			$cli{out} = canonpath($cli{out});
-		}
-		if ($cli{outfile}) {
-			$cli{outfile} = rel2abs($cli{outfile});
-			$cli{outfile} = canonpath($cli{outfile});
-		}
-	}
+    #if not -q or --quiet print all this (else be quiet)
+    if ( $cli{quiet} == 0 ) {
+
+        #print STDERR 'My @ARGV: {', join( "} {", @arg_copy ), '}', "\n";
+        #no warnings 'uninitialized';
+        #print STDERR "Extra options from config:", Dumper(\%opts);
+
+        if ( $cli{in} ) {
+            say 'My input path: ', canonpath( $cli{in} );
+            $cli{in} = rel2abs( $cli{in} );
+            $cli{in} = canonpath( $cli{in} );
+            say "My absolute input path: $cli{in}";
+        }
+        if ( $cli{infile} ) {
+            say 'My input file: ', canonpath( $cli{infile} );
+            $cli{infile} = rel2abs( $cli{infile} );
+            $cli{infile} = canonpath( $cli{infile} );
+            say "My absolute input file: $cli{infile}";
+        }
+        if ( $cli{out} ) {
+            say 'My output path: ', canonpath( $cli{out} );
+            $cli{out} = rel2abs( $cli{out} );
+            $cli{out} = canonpath( $cli{out} );
+            say "My absolute output path: $cli{out}";
+        }
+        if ( $cli{outfile} ) {
+            say 'My outfile: ', canonpath( $cli{outfile} );
+            $cli{outfile} = rel2abs( $cli{outfile} );
+            $cli{outfile} = canonpath( $cli{outfile} );
+            say "My absolute outfile: $cli{outfile}";
+        }
+    }
+    else {
+        $cli{verbose} = -1;    #and logging is OFF
+
+        if ( $cli{in} ) {
+            $cli{in} = rel2abs( $cli{in} );
+            $cli{in} = canonpath( $cli{in} );
+        }
+        if ( $cli{infile} ) {
+            $cli{infile} = rel2abs( $cli{infile} );
+            $cli{infile} = canonpath( $cli{infile} );
+        }
+        if ( $cli{out} ) {
+            $cli{out} = rel2abs( $cli{out} );
+            $cli{out} = canonpath( $cli{out} );
+        }
+        if ( $cli{outfile} ) {
+            $cli{outfile} = rel2abs( $cli{outfile} );
+            $cli{outfile} = canonpath( $cli{outfile} );
+        }
+    }
 
     #copy all config opts
-	my %all_opts = %opts;
-	#update with cli options
-	foreach my $key (keys %cli) {
-		if ( defined $cli{$key} ) {
-			$all_opts{$key} = $cli{$key};
-		}
-	}
+    my %all_opts = %opts;
+
+    #update with cli options
+    foreach my $key ( keys %cli ) {
+        if ( defined $cli{$key} ) {
+            $all_opts{$key} = $cli{$key};
+        }
+    }
 
     return ( \%all_opts );
 }
@@ -2201,6 +2214,130 @@ sub _update_exp_tbl {
 }
 
 
+### INTERFACE SUB ###
+# Usage      : --mode=top_hits
+# Purpose    : selects top hits from blastout_uniq-report_per_ps_expanded tables per domain
+# Returns    : name of the resulting table
+# Parameters : $param_href
+# Throws     : croaks if wrong number of parameters
+# Comments   :
+# See Also   :
+sub top_hits {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('top_hits() needs a $param_href') unless @_ == 1;
+    my ($param_href) = @_;
+
+    # take top 10 if not defined on command line
+    my $top_hits = defined $param_href->{top_hits} ? $param_href->{top_hits} : 10;
+    my $top_hits_tbl = 'top_hits' . "$param_href->{top_hits}";
+
+    # connect to database
+    my $dbh = _dbi_connect($param_href);
+
+    # create top_hits table
+    my $create_top_hits_q = qq{
+    CREATE TABLE $top_hits_tbl (
+    org_of_origin VARCHAR(5) NOT NULL,
+    ti INT UNSIGNED NOT NULL,
+    species_name VARCHAR(200) NOT NULL,
+    gene_hits_per_species INT UNSIGNED NOT NULL,
+    domain VARCHAR(20) NOT NULL,
+    hits1 INT UNSIGNED NOT NULL,
+    hits2 INT UNSIGNED NOT NULL,
+    hits3 INT UNSIGNED NOT NULL,
+    hits4 INT UNSIGNED NOT NULL,
+    hits5 INT UNSIGNED NOT NULL,
+    hits6 INT UNSIGNED NOT NULL,
+    hits7 INT UNSIGNED NOT NULL,
+    hits8 INT UNSIGNED NOT NULL,
+    hits9 INT UNSIGNED NOT NULL,
+    hits10 INT UNSIGNED NOT NULL,
+    PRIMARY KEY (org_of_origin, ti),
+    KEY(species_name, domain)
+    )
+    };
+    _create_table( { table_name => $top_hits_tbl, dbh => $dbh, query => $create_top_hits_q, %{$param_href} } );
+    $log->trace("Report: $create_top_hits_q");
+
+    # select all expanded tables in a support table
+    my $select_exp_q = qq{ SELECT report_expanded_tbl FROM $param_href->{database}.support };
+    my @exp_tables   = map { $_->[0] } @{ $dbh->selectall_arrayref($select_exp_q) };
+    my $exp_print    = sprintf( Data::Dumper->Dump( [ \@exp_tables ], [qw(*report_expanded_tables)] ) );
+    $log->debug("$exp_print");
+
+    # select top N hits from table
+    foreach my $exp_tbl (@exp_tables) {
+
+        # skip empty rows
+        next if ( $exp_tbl eq '' );
+
+        # get organism short code
+        ( my $organism ) = $exp_tbl =~ m/\A(.+?)\_.+\z/;
+
+        # run for each domain
+        foreach my $domain ( 'Archaea', 'Cyanobacteria', 'Bacteria' ) {
+            my $ins_hits_q = qq{
+            INSERT INTO $top_hits_tbl
+            SELECT '$organism' AS org_of_origin, ti, species_name, gene_hits_per_species, domain, hits1, hits2, hits3, hits4, hits5, hits6, hits7, hits8, hits9, hits10
+            FROM $exp_tbl
+            WHERE domain = '$domain'
+            ORDER BY gene_hits_per_species DESC
+            LIMIT $top_hits
+            };
+            $log->trace($ins_hits_q);
+            my $rows;
+            eval { $rows = $dbh->do($ins_hits_q); };
+            $log->info(
+                "Action: {$param_href->{database}.$top_hits_tbl} inserted with {$rows} $domain species from {$exp_tbl}")
+              unless $@;
+            $log->error(
+                "Error: inserting {$param_href->{database}.$top_hits_tbl} failed for $domain for {$exp_tbl}: $@")
+              if $@;
+        }
+    }
+
+    # create summary table for top hits
+    _top_hits_cnt( { top_hits_tbl => $top_hits_tbl, %{$param_href} } );
+
+    return $top_hits_tbl;
+}
+
+
+### INTERNAL UTILITY ###
+# Usage      : _top_hits_cnt( { top_hits_tbl => $top_hits_tbl, %{$param_href} } );
+# Purpose    : summary of top_hits table
+# Returns    : nothing
+# Parameters : 
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : 
+sub _top_hits_cnt {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_top_hits_cnt() needs a $param_href') unless @_ == 1;
+    my ($param_href) = @_;
+
+    # connect to database
+    my $dbh = _dbi_connect($param_href);
+
+    # create top_hits table
+    my $create_top_hits_q = qq{
+    CREATE TABLE $param_href->{top_hits_tbl}_cnt (
+    domain VARCHAR(20) NOT NULL,
+    ti INT UNSIGNED NOT NULL,
+    species_name VARCHAR(200) NOT NULL,
+    sp_cnt INT UNSIGNED NOT NULL,
+    PRIMARY KEY(domain, ti)
+    )
+    SELECT domain, ti, species_name, COUNT(species_name) AS sp_cnt 
+    FROM $param_href->{top_hits_tbl}
+    GROUP BY species_name
+    ORDER BY sp_cnt DESC;
+    };
+    _create_table( { table_name => "$param_href->{top_hits_tbl}_cnt", dbh => $dbh, query => $create_top_hits_q, %{$param_href} } );
+    $log->trace("Report: $create_top_hits_q");
+
+    return;
+}
 
 
 1;
@@ -2246,6 +2383,13 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
 
     # import full BLAST database (plus ti and pgi columns)
     BlastoutAnalyze.pm --mode=import_blastdb -if t/data/db90_head.gz -d hs_blastout -v -v
+
+    # import expanded reports into database
+    BlastoutAnalyze.pm --mode=import_reports --in t/data/ -d origin --max_processes=4
+
+    # find top N species with most BLAST hits (proteins found) in prokaryotes per domain (Archaea, Cyanobacteria, Bacteria)
+    FindOrigin.pm --mode=top_hits -d kam --top_hits=10
+
 
 
 =head1 DESCRIPTION
@@ -2413,6 +2557,13 @@ Imports BLAST database file into MySQL (it has 2 extra columns = ti and pgi). It
  BlastoutAnalyze.pm --mode=import_reports --in t/data/ -d origin --max_processes=4
 
 Imports expanded reports per species in BLAST database into MySQL. It can import in parallel. It needs MySQL connection parameters to connect to MySQL.
+
+=item top_hits
+
+ # find N top hits for all species per domain in a database
+ FindOrigin.pm --mode=top_hits -d kam --top_hits=10
+
+It finds top N species with most BLAST hits (proteins found) in prokaryotes per domain (Archaea, Cyanobacteria, Bacteria).
 
 
 =back
