@@ -1968,9 +1968,10 @@ sub import_reports {
     my $max_processes = defined $param_href->{max_processes} ? $param_href->{max_processes} : 1;
 
     # collect expanded files
-    my @exp_files = File::Find::Rule->file()->name('*good_report_per_species_expanded.TabSeparated.gz')->in($in);
+    my @exp_files = File::Find::Rule->file()->name('*report_per_species_expanded.TabSeparated.gz')->in($in);
     @exp_files = sort { $a cmp $b } @exp_files;
-    my $exp_files_print = sprintf( Data::Dumper->Dump( [ \@exp_files ], [qw(*report_expanded_files)] ) );
+	my $found_exp = @exp_files;
+    my $exp_files_print = sprintf( Data::Dumper->Dump( [ \@exp_files ], ["found $found_exp expanded reports"] ) );
     $log->debug("$exp_files_print");
 
     # helping hash to remember tis
@@ -2552,6 +2553,7 @@ Imports BLAST database file into MySQL (it has 2 extra columns = ti and pgi). It
 
  # options from command line
  BlastoutAnalyze.pm --mode=import_reports --in t/data/ -d origin --max_processes=4 -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+ BlastoutAnalyze.pm --mode=import_reports --in /msestak/workdir/origin_of_eukaryotes/ClickHouse_db_47_genomes/ -d origin --max_processes=4
 
  # options from config
  BlastoutAnalyze.pm --mode=import_reports --in t/data/ -d origin --max_processes=4

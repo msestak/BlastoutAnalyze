@@ -199,6 +199,7 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
 
         # options from command line
         BlastoutAnalyze.pm --mode=import_reports --in t/data/ -d origin --max_processes=4 -p msandbox -u msandbox -po 5625 -s /tmp/mysql_sandbox5625.sock
+        BlastoutAnalyze.pm --mode=import_reports --in /msestak/workdir/origin_of_eukaryotes/ClickHouse_db_47_genomes/ -d origin --max_processes=4
 
         # options from config
         BlastoutAnalyze.pm --mode=import_reports --in t/data/ -d origin --max_processes=4
