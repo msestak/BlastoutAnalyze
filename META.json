@@ -4,7 +4,7 @@
       "Martin Sebastijan Šestak"
    ],
    "dynamic_config" : 0,
-   "generated_by" : "Minilla/v3.0.4, CPAN::Meta::Converter version 2.150010",
+   "generated_by" : "Minilla/v3.0.1, CPAN::Meta::Converter version 2.150001",
    "license" : [
       "perl_5"
    ],
@@ -88,6 +88,5 @@
    "version" : "0.01",
    "x_contributors" : [
       "Martin Sebastijan Šestak <msestak@irb.hr>"
-   ],
-   "x_serialization_backend" : "JSON::PP version 2.27400"
+   ]
 }

@@ -1827,6 +1827,20 @@ sub import_blastdb {
                 # extract pgi, prot_name and fasta + fasta
                 my ( $prot_id, $prot_name, $fasta ) = $_ =~ m{\A([^\t]+)\t([^\n]+)\n(.+)\z}smx;
 
+                # check for missing $prot_name in file
+                my $header;
+                if ( !$prot_id ) {
+                    #print "UNDEFINED:$_\n";
+                    ( $header, $fasta ) = $_ =~ m{\A([^\n]+)\n(.+)\z}smx;
+                    #print "HEADER:$header\tFASTA:$fasta\n";
+                    eval { ( $prot_id, $prot_name ) = split /\t/, $header; };
+                    if ($@) {
+                        $prot_id   = $header;
+                        $prot_name = '';
+                    }
+                    print "PROT_ID:$prot_id\tPROT_NAME:$prot_name\n";
+                }
+
                 #pgi removed as record separator (return it back)
                 $prot_id = 'pgi' . $prot_id;
                 my ( $pgi, $ti ) = $prot_id =~ m{pgi\|(\d+)\|ti\|(\d+)\|pi\|(?:\d+)\|};
@@ -1873,8 +1887,9 @@ sub import_blastdb {
         ti INT UNSIGNED NOT NULL,
         prot_name VARCHAR(200) NOT NULL,
         fasta MEDIUMTEXT NOT NULL,
-        PRIMARY KEY(ti, id)
-        )ENGINE=TokuDB}, $dbh->quote_identifier($table)
+        PRIMARY KEY(ti, id),
+        KEY id (id)
+        )}, $dbh->quote_identifier($table)
         );
         _create_table( { table_name => $table, dbh => $dbh, query => $create_query, %{$param_href} } );
         $log->trace("Report: $create_query");
@@ -1913,7 +1928,7 @@ sub import_blastdb {
 
         # add index
         my $alter_query = qq{
-        ALTER TABLE $table ADD INDEX prot_namex(prot_name), ADD INDEX pgix(pgi)
+        ALTER TABLE $table ADD INDEX prot_namex(prot_name)
         };
         eval { $dbh->do( $alter_query, { async => 1 } ) };
 
@@ -1936,8 +1951,8 @@ sub import_blastdb {
         }
 
         #report success or failure
-        $log->error("Error: adding indices prot_namex and pgix on {$table} failed: $@") if $@;
-        $log->info("Action: indices prot_namex and pgix on {$table} added successfully!") unless $@;
+        $log->error("Error: adding indices prot_namex on {$table} failed: $@") if $@;
+        $log->info("Action: indices prot_namex on {$table} added successfully!") unless $@;
 
         $dbh->disconnect;
 
@@ -2339,6 +2354,10 @@ sub _top_hits_cnt {
 
     return;
 }
+
+
+
+
 
 
 1;
