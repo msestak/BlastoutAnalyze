@@ -16,8 +16,9 @@ use Data::Printer;
 use Log::Log4perl;
 use File::Find::Rule;
 use Config::Std { def_sep => '=' };   #MySQL uses =
-use DBI;
+use DBI qw(:sql_types);   # for bind_param()
 use DBD::mysql;
+use DBD::SQLite;
 use DateTime::Tiny;
 use POSIX qw(mkfifo);
 use Parallel::ForkManager;
@@ -46,6 +47,7 @@ our @EXPORT_OK = qw{
   import_blastdb
   import_reports
   top_hits
+  reduce_blastout
 };
 
 #MODULINO - works with debugger too
@@ -101,6 +103,7 @@ sub run {
         import_blastdb       => \&import_blastdb,         # import BLAST database with all columns
         import_reports       => \&import_reports,         # import expanded reports
         top_hits             => \&top_hits,               # create top N hits based on number of genes per domain
+        reduce_blastout      => \&reduce_blastout,        # reduce blastout based on cutoff
 
     );
 
@@ -192,6 +195,7 @@ sub get_parameters_from_cmd {
         'names|na=s'          => \$cli{names},
         'names_tbl=s'         => \$cli{names_tbl},
         'blastout=s'          => \$cli{blastout},
+        'stats=s'             => \$cli{stats},
         'blastout_analysis=s' => \$cli{blastout_analysis},
         'map=s'               => \$cli{map},
         'analyze_ps=s'        => \$cli{analyze_ps},
@@ -199,6 +203,7 @@ sub get_parameters_from_cmd {
         'report_per_ps=s'     => \$cli{report_per_ps},
         'tax_id|ti=i'         => \$cli{tax_id},
         'max_processes=i'     => \$cli{max_processes},
+        'cutoff=i'            => \$cli{cutoff},
 
         # top hits
         'top_hits=i' => \$cli{top_hits},
@@ -2356,8 +2361,403 @@ sub _top_hits_cnt {
 }
 
 
+### INTERFACE SUB ###
+# Usage      : --mode=reduce_blastout
+# Purpose    : is to remove blast hits that are less than cuttof value (1, 2, ...)
+# Returns    : nothing
+# Parameters : (blastout, analyze and cuttoff from command line)
+# Throws     : croaks if wrong number of parameters
+# Comments   : 
+# See Also   : 
+sub reduce_blastout {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('reduce_blastout() needs a $param_href') unless @_ == 1;
+    my ($param_href) = @_;
+
+    my $out      = $param_href->{out}      or $log->logcroak('no $out specified on command line!');
+    my $blastout = $param_href->{blastout} or $log->logcroak('no $blastout specified on command line!');
+    my $stats    = $param_href->{stats}    or $log->logcroak('no $stats specified on command line!');
+    my $cutoff   = $param_href->{cutoff}   or $log->logcroak('no $cutoff specified on command line!');
+
+    # create SQLite database
+    my $dbfile = path( $out, "blastout$$.db" );
+    my %conn_attrs = (
+        RaiseError         => 1,
+        PrintError         => 0,
+        AutoCommit         => 1,
+        ShowErrorStatement => 1,
+    );
+    my $dbh = DBI->connect( "dbi:SQLite:dbname=$dbfile", "", "", \%conn_attrs );
+    $log->info( 'Report: connected to {', $dbfile, '} by dbh ', $dbh );
+    $dbh->do("PRAGMA journal_mode = WAL");      # write ahead journal
+    $dbh->do("PRAGMA synchronous = OFF");       # sync is off
+    $dbh->do("PRAGMA cache_size = 1000000");    # 1 GB
+
+    # import analyze stats
+    my $analyze_tbl = _import_stats( { %{$param_href}, dbh => $dbh } );
+
+    # import part of blastout
+    _import_blastout_partial( { %{$param_href}, dbh => $dbh, analyze_tbl => $analyze_tbl } );
+
+    unlink $dbfile and $log->warn("Action: deleted SQLite database $dbfile");
+
+    return;
+}
 
 
+### INTERNAL UTILITY ###
+# Usage      : my $analyze_tbl = _import_stats( { %{$param_href}, dbh => $dbh } );
+# Purpose    : import analyze file to SQLite database
+# Returns    : $analyze_tbl name
+# Parameters : stats file and database handle
+# Throws     : croaks if wrong number of parameters
+# Comments   : part of reduce_blastout()
+# See Also   : 
+sub _import_stats {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_import_stats() needs a $param_href') unless @_ == 1;
+    my ($param_href) = @_;
+
+    my $dbh   = $param_href->{dbh}   or $log->logcroak('no $dbh sent to _import_stats()!');
+    my $stats = $param_href->{stats} or $log->logcroak('no $stats specified on command line!');
+
+    # create genomes per phylostrata table
+    my $analyze_tbl = path($stats)->basename;
+    $analyze_tbl =~ s/[.-]/_/g;
+    my $analyze_create = sprintf(
+        qq{
+    CREATE TABLE %s (
+    ps TINYINT UNSIGNED NOT NULL,
+    psti INT UNSIGNED NOT NULL,
+    num_of_genes INT UNSIGNED NOT NULL,
+    ti INT UNSIGNED NOT NULL,
+    PRIMARY KEY(ti)
+    ) WITHOUT ROWID }, $dbh->quote_identifier($analyze_tbl)
+    );
+    _create_table( { table_name => $analyze_tbl, dbh => $dbh, query => $analyze_create } );
+    $log->trace("Report: $analyze_create");
+
+    # read and import ps_table
+    open( my $stats_fh, "<", $param_href->{stats} )
+      or $log->logdie("Error: can't open map $param_href->{stats} for reading:$!");
+
+    # prepare an insert statement
+    my $analyze_ins = sprintf(
+        qq{
+    INSERT INTO %s (ps, psti, num_of_genes, ti)
+    VALUES( ?, ?, ?, ? )
+    }, $dbh->quote_identifier($analyze_tbl)
+    );
+    my $sth_ins = $dbh->prepare($analyze_ins);
+
+    # insert entire file in one transaction
+    $dbh->do('BEGIN TRANSACTION');
+
+    # $dbh->{AutoCommit} is turned off temporarily during a transaction;
+
+    my $analyze_rows = 0;
+    while (<$stats_fh>) {
+        chomp;
+
+        # if ps then skip
+        if (m/ps/) {
+            next;
+        }
+
+        # else normal genome in phylostrata line
+        else {
+            my ( $ps, $psti, $num_of_genes, $ti ) = split "\t", $_;
+
+            # insert to db
+            $sth_ins->execute( $ps, $psti, $num_of_genes, $ti );
+            $analyze_rows++;
+        }
+    }    # end while reading stats file
+
+    # commit once at end of insertion
+    $dbh->do('COMMIT') and $log->info("Action: inserted $analyze_rows rows to $analyze_tbl");
+
+    # $dbh->{AutoCommit} is turned on again;
+    close $stats_fh;
+    $sth_ins->finish;
+
+    # create index on phylostrata
+    my $analyze_index = sprintf( qq{
+    CREATE INDEX ps_idx ON %s (ps)
+    }, $dbh->quote_identifier($analyze_tbl) );
+    eval { $dbh->do($analyze_index); };
+    $log->error("Action: adding index ps_idx on $analyze_tbl failed: $@") if $@;
+    $log->trace("Action: index ps_idx on $analyze_tbl created") unless $@;
+
+    return $analyze_tbl;
+}
+
+
+### CLASS METHOD/INSTANCE METHOD/INTERFACE SUB/INTERNAL UTILITY ###
+# Usage      : _import_blastout_partial( { %{$param_href}, dbh => $dbh, analyze_tbl => $analyze_tbl } );
+# Purpose    : import blastout prot_id by prot_id
+# Returns    : nothing
+# Parameters : 
+# Throws     : croaks if wrong number of parameters
+# Comments   : part of reduce_blastout()
+# See Also   : 
+sub _import_blastout_partial {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_import_blastout_partial() needs a $param_href') unless @_ == 1;
+    my ($param_href) = @_;
+
+    my $out      = $param_href->{out}      or $log->logcroak('no $out specified on command line!');
+    my $blastout = $param_href->{blastout} or $log->logcroak('no $blastout specified on command line!');
+    my $cutoff   = $param_href->{cutoff}   or $log->logcroak('no $cutoff specified on command line!');
+    my $dbh      = $param_href->{dbh}      or $log->logcroak('no $dbh sent to _import_blastout_partial()!');
+    my $analyze_tbl = $param_href->{analyze_tbl}
+      or $log->logcroak('no $analyze_tbl sent to _import_blastout_partial()!');
+
+    # create blastout table
+    my $blastout_tbl = path($blastout)->basename;
+    $blastout_tbl =~ s/[.-]/_/g;    #for files that have dots in name
+    my $blastout_ex = path( $out, $blastout_tbl . "_cutoff$cutoff" );
+
+    # check if blastout_ex file exists and delete it
+    if ( -f $blastout_ex ) {
+        unlink $blastout_ex and $log->warn("Warn: blastout export $blastout_ex deleted!");
+    }
+
+    #create table
+    my $blastout_create = sprintf(
+        qq{
+    CREATE TABLE %s (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    prot_id VARCHAR(40) NOT NULL,
+    ti INT UNSIGNED NOT NULL,
+    pgi VARCHAR(20) NOT NULL,
+    hit VARCHAR(40) NOT NULL,
+    col3 FLOAT NOT NULL,
+    col4 INT UNSIGNED NOT NULL,
+    col5 INT UNSIGNED NOT NULL,
+    col6 INT UNSIGNED NOT NULL,
+    col7 INT UNSIGNED NOT NULL,
+    col8 INT UNSIGNED NOT NULL,
+    col9 INT UNSIGNED NOT NULL,
+    col10 INT UNSIGNED NOT NULL,
+    evalue REAL NOT NULL,
+    bitscore FLOAT NOT NULL
+    ) }, $dbh->quote_identifier($blastout_tbl)
+    );
+    _create_table( { table_name => $blastout_tbl, dbh => $dbh, query => $blastout_create } );
+
+    # create index on ti (for select on ti)
+    my $blastout_index = sprintf(
+        qq{
+    CREATE INDEX ti_idx ON %s (ti)
+    }, $dbh->quote_identifier($blastout_tbl)
+    );
+    eval { $dbh->do($blastout_index); };
+    $log->error("Action: adding index ti_idx on $blastout_tbl failed: $@") if $@;
+    $log->trace("Action: index ti_idx on $blastout_tbl created") unless $@;
+
+    # prepare an insert statement
+    my $blastout_ins = sprintf(
+        qq{
+    INSERT INTO %s (prot_id, ti, pgi, hit, col3, col4, col5, col6, col7, col8, col9, col10, evalue, bitscore)
+    VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )
+    }, $dbh->quote_identifier($blastout_tbl)
+    );
+    $log->trace($blastout_ins);
+    my $sth_ins = $dbh->prepare($blastout_ins);
+
+    # open blastout file
+    open( my $blastout_fh, "< :encoding(ASCII)", $param_href->{blastout} )
+      or $log->logdie("Error: BLASTout file not found:$!");
+    open( my $blastout_ex_fh, ">> :encoding(ASCII)", $blastout_ex )
+      or $log->logdie("Error: BLASTout file can't be created:$!");
+
+    # needed for filtering duplicates
+    # idea is that prot_ids come one after another
+    my $prot_prev = '';
+
+# in blastout
+#ENSG00000151914|ENSP00000354508    pgi|34252924|ti|9606|pi|0|  100.00  7461    0   0   1   7461    1   7461    0.0 1.437e+04
+
+    $log->debug("Report: started processing of $param_href->{blastout}");
+    local $.;
+    my $protid_cnt = 0;
+    my $exported_cnt    = 0;
+    my $total_cnt = 0;
+
+    # insert entire file in one transaction
+    $dbh->{AutoCommit} = 0;
+    $dbh->do('BEGIN TRANSACTION');
+  BLASTOUT:
+    while (<$blastout_fh>) {
+        chomp;
+
+        my ( $prot_id, $hit, $col3, $col4, $col5, $col6, $col7, $col8, $col9, $col10, $evalue, $bitscore ) = split "\t",
+          $_;
+        my ( $pgi, $ti ) = $hit =~ m{pgi\|(\d+)\|ti\|(\d+)\|pi\|(?:\d+)\|};
+
+        # import to database if same prot_id and do analysis
+        if ( "$prot_prev" eq "$prot_id" ) {
+
+            #import to db
+            $sth_ins->execute(
+                $prot_id, $ti,   $pgi,  $hit,  $col3,  $col4,   $col5,
+                $col6,    $col7, $col8, $col9, $col10, $evalue, $bitscore
+            );
+            $prot_prev = $prot_id;
+            $protid_cnt++;
+            $total_cnt++;
+            if ( $protid_cnt == 10000 ) {
+                $dbh->do('COMMIT');
+            }
+        }
+        else {
+            # commit if end of prot_id
+            $dbh->do('COMMIT') and $log->debug("Action: inserted {$prot_prev} $protid_cnt rows to $blastout_tbl");
+
+            # do analysis
+            if ( !$prot_prev eq '' ) {
+
+                my $row_exported = _cutoff_pruning(
+                    {   %{$param_href},
+                        dbh          => $dbh,
+                        anaylze_tbl  => $analyze_tbl,
+                        blastout_tbl => $blastout_tbl,
+                        prot_id      => $prot_prev,
+                        blastex_fh   => $blastout_ex_fh
+                    }
+                );
+
+                # reset to start new prot_id
+                $prot_prev  = $prot_id;
+                $protid_cnt = 0;
+                $exported_cnt += $row_exported;
+                $log->debug("Action: starting with next prot_id {$prot_id}") and redo BLASTOUT;
+            }
+
+            # there is '' empty prot_prev at start
+            else {
+                $prot_prev  = $prot_id;
+                $protid_cnt = 0;
+                $log->debug("Action: starting with next prot_id {$prot_id}") and redo BLASTOUT;
+            }
+        }
+
+        # show progress
+        if ( $. % 1000000 == 0 ) {
+            $log->trace("$. lines processed!");
+        }
+
+    }    # end while reading blastout
+
+    # need to commit last prot_id outside loop
+    $dbh->do('COMMIT') and $log->debug("Action: inserted {$prot_prev} $protid_cnt rows to $blastout_tbl");
+    close $blastout_fh;
+    $sth_ins->finish;
+    my $row_exported = _cutoff_pruning(
+        {   %{$param_href},
+            dbh          => $dbh,
+            anaylze_tbl  => $analyze_tbl,
+            blastout_tbl => $blastout_tbl,
+            prot_id      => $prot_prev,
+            blastex_fh   => $blastout_ex_fh
+        }
+    );
+    $exported_cnt += $row_exported;
+    $dbh->{AutoCommit} = 1;    # turned on again;
+
+    $log->info("Report: file {$blastout_ex} printed successfully with $exported_cnt lines (from $total_cnt lines)");
+
+    return;
+}
+
+
+### INTERNAL UTILITY ###
+# Usage      : my $row_exported = _cutoff_pruning( { %{$param_href}, dbh => $dbh, analyze_tbl => $analyze_tbl, blastout_tbl => $blastout_tbl, prot_id => $prot_prev, blastex_fh   => $blastout_ex_fh } );
+# Purpose    : select and delete taxids that are smaller than cutoff
+# Returns    : $row_cnt (number of exported rows)
+# Parameters : 
+# Throws     : croaks if wrong number of parameters
+# Comments   : part of reduce_blastout()
+# See Also   : 
+sub _cutoff_pruning {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('_cutoff_pruning() needs a $param_href') unless @_ == 1;
+    my ($param_href) = @_;
+
+    my $cutoff  = $param_href->{cutoff}  or $log->logcroak('no $cutoff specified on command line!');
+    my $dbh     = $param_href->{dbh}     or $log->logcroak('no $dbh sent to _cutoff_pruning()!');
+    my $prot_id = $param_href->{prot_id} or $log->logcroak('no $prot_id sent to _cutoff_pruning()!');
+    my $analyze_tbl = $param_href->{analyze_tbl}
+      or $log->logcroak('no $analyze_tbl sent to _cutoff_pruning()!');
+    my $blastout_tbl = $param_href->{blastout_tbl}
+      or $log->logcroak('no $blastout_tbl sent to _cutoff_pruning()!');
+    my $blastex_fh = $param_href->{blastex_fh} or $log->logcroak('no $blastex_fh sent to _cutoff_pruning()!');
+
+    # select ps which are smaller or equal than cutoff
+    my $ps_select = sprintf(
+        qq{
+    SELECT an.ps, COUNT(an.ps) AS ps_cnt FROM %s AS bl INNER JOIN %s AS an ON bl.ti = an.ti WHERE prot_id = %s GROUP BY an.ps HAVING ps_cnt <= ?
+    }, $dbh->quote_identifier($blastout_tbl), $dbh->quote_identifier($analyze_tbl), $dbh->quote($prot_id)
+    );
+    $log->trace("Report: $ps_select");
+    my $sth_sel = $dbh->prepare($ps_select);
+    $sth_sel->bind_param(1, $cutoff, SQL_INTEGER);
+    $sth_sel->execute();
+
+    # get column phylostrata to array to iterate insert query on them
+    my @ps = map { $_->[0] } @{ $sth_sel->fetchall_arrayref([0]) };
+    $log->trace( 'Returned phylostrata to delete: {', join( '}{', @ps ), '}' );
+
+    # delete rows which have tis from phylostrata smaller or equal to cutoff
+    my $del_blastout = sprintf(
+        qq{
+    DELETE FROM %s WHERE ti IN (SELECT ti FROM %s AS an WHERE an.ps IN(} . join(',',('?') x @ps) . qq{)) AND prot_id = %s
+    }, $dbh->quote_identifier($blastout_tbl), $dbh->quote_identifier($analyze_tbl), $dbh->quote($prot_id)
+    );
+    my $sth_del = $dbh->prepare($del_blastout);
+    $log->trace("Report: $del_blastout");
+    eval { $sth_del->execute(@ps); };
+    my $del_rows = $sth_del->rows;
+    $log->error("Action: deleting $prot_id from $blastout_tbl failed: $@") if $@;
+    $log->debug("Action: deleted $del_rows $prot_id rows from $blastout_tbl table") unless $@;
+
+    #SELECT an.ps, COUNT(an.ps) AS ps_cnt FROM hs_all_plus_21_12_2015 AS bl INNER JOIN analyze_hs_9606_cdhit_large_extracted AS an ON bl.ti = an.ti WHERE prot_id = 'ENSP00000046794' GROUP BY an.ps HAVING ps_cnt <= 1;
+    #DELETE FROM hs_all_plus_21_12_2015 WHERE ti IN (SELECT ti FROM analyze_hs_9606_cdhit_large_extracted AS an WHERE an.ps IN(11,16)) AND prot_id = 'ENSP00000046794';
+
+    # export to blast_export file
+    my $blast_export = sprintf(
+        qq{
+    SELECT prot_id, hit, col3, col4, col5, col6, col7, col8, col9, col10, evalue, bitscore
+    FROM %s
+    WHERE prot_id = ?
+    }, $dbh->quote_identifier($blastout_tbl)
+    );
+    my ( $prot_id2, $hit, $col3, $col4, $col5, $col6, $col7, $col8, $col9, $col10, $evalue, $bitscore );
+    my $sth_ex = $dbh->prepare($blast_export);
+    $log->trace("Report: $blast_export");
+    $sth_ex->execute($prot_id);
+    $sth_ex->bind_columns(
+        \( $prot_id2, $hit, $col3, $col4, $col5, $col6, $col7, $col8, $col9, $col10, $evalue, $bitscore ) );
+    my $row_cnt = 0;
+    while ( $sth_ex->fetchrow_arrayref ) {
+        print {$blastex_fh}
+          "$prot_id2\t$hit\t$col3\t$col4\t$col5\t$col6\t$col7\t$col8\t$col9\t$col10\t$evalue\t$bitscore\n";
+        $row_cnt++;
+    }
+    $log->debug("Action: exported $row_cnt rows for $prot_id");
+
+    # truncate blastout_tbl to reduce size of database
+    my $blastout_del = sprintf( qq{
+    DELETE FROM %s
+    }, $dbh->quote_identifier($blastout_tbl) );
+    $log->trace("Report: $blastout_del");
+    eval { $dbh->do($blastout_del); };
+    $log->error("Action: deleting $blastout_tbl after $prot_id failed: $@") if $@;
+    $log->debug("Action: deleted $blastout_tbl table after $prot_id") unless $@;
+
+    return $row_cnt;
+}
 
 
 1;
@@ -2408,9 +2808,10 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
     BlastoutAnalyze.pm --mode=import_reports --in t/data/ -d origin --max_processes=4
 
     # find top N species with most BLAST hits (proteins found) in prokaryotes per domain (Archaea, Cyanobacteria, Bacteria)
-    FindOrigin.pm --mode=top_hits -d kam --top_hits=10
+    BlastoutAnalyze.pm --mode=top_hits -d kam --top_hits=10
 
-
+    # reduce blastout based on cutoff (it deletes hits if less or equal to cutoff per phylostratum)
+    BlastoutAnalyze.pm --mode=reduce_blastout --stats=t/data/analyze_hs_9606_cdhit_large_extracted --blastout=t/data/hs_all_plus_21_12_2015 --out=t/data/ --cutoff=3 -v -v
 
 =head1 DESCRIPTION
 
@@ -2582,10 +2983,18 @@ Imports expanded reports per species in BLAST database into MySQL. It can import
 =item top_hits
 
  # find N top hits for all species per domain in a database
- FindOrigin.pm --mode=top_hits -d kam --top_hits=10
+ BlastoutAnalyze.pm --mode=top_hits -d kam --top_hits=10
 
 It finds top N species with most BLAST hits (proteins found) in prokaryotes per domain (Archaea, Cyanobacteria, Bacteria).
 
+=item reduce_blastout
+
+ # reduce blastout based on cutoff (it deletes hits if less or equal to cutoff per phylostratum)
+ BlastoutAnalyze.pm --mode=reduce_blastout --stats=t/data/analyze_hs_9606_cdhit_large_extracted --blastout=t/data/hs_all_plus_21_12_2015 --out=t/data/ --cutoff=3 -v -v
+
+It deletes hits in a BLAST output file if number of tax ids per phylostratum is less or equal to cutoff. It requires blastout and analyze files. Analyze file is required to get list of tax ids per phylostratum.
+It works by importing to SQLite database, doing analysis there and exporting to $out directory (blastout_export file is deleted if it already exists).
+SQLite database is also deleted after the analysis.
 
 =back
 

@@ -41,7 +41,10 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
     BlastoutAnalyze.pm --mode=import_reports --in t/data/ -d origin --max_processes=4
 
     # find top N species with most BLAST hits (proteins found) in prokaryotes per domain (Archaea, Cyanobacteria, Bacteria)
-    FindOrigin.pm --mode=top_hits -d kam --top_hits=10
+    BlastoutAnalyze.pm --mode=top_hits -d kam --top_hits=10
+
+    # reduce blastout based on cutoff (it deletes hits if less or equal to cutoff per phylostratum)
+    BlastoutAnalyze.pm --mode=reduce_blastout --stats=t/data/analyze_hs_9606_cdhit_large_extracted --blastout=t/data/hs_all_plus_21_12_2015 --out=t/data/ --cutoff=3 -v -v
 
 # DESCRIPTION
 
@@ -209,9 +212,18 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
 - top\_hits
 
         # find N top hits for all species per domain in a database
-        FindOrigin.pm --mode=top_hits -d kam --top_hits=10
+        BlastoutAnalyze.pm --mode=top_hits -d kam --top_hits=10
 
     It finds top N species with most BLAST hits (proteins found) in prokaryotes per domain (Archaea, Cyanobacteria, Bacteria).
+
+- reduce\_blastout
+
+        # reduce blastout based on cutoff (it deletes hits if less or equal to cutoff per phylostratum)
+        BlastoutAnalyze.pm --mode=reduce_blastout --stats=t/data/analyze_hs_9606_cdhit_large_extracted --blastout=t/data/hs_all_plus_21_12_2015 --out=t/data/ --cutoff=3 -v -v
+
+    It deletes hits in a BLAST output file if number of tax ids per phylostratum is less or equal to cutoff. It requires blastout and analyze files. Analyze file is required to get list of tax ids per phylostratum.
+    It works by importing to SQLite database, doing analysis there and exporting to $out directory (blastout\_export file is deleted if it already exists).
+    SQLite database is also deleted after the analysis.
 
 # CONFIGURATION
 
