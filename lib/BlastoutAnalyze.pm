@@ -3031,7 +3031,7 @@ Clone GitHub repo and install dependencies with cpanm.
 
 =head1 LICENSE
 
-Copyright (C) Martin Sebastijan Šestak.
+Copyright (C) 2016-2017 Martin Sebastijan Šestak.
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself.
