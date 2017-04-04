@@ -245,6 +245,17 @@ Example:
     socket   = /tmp/mysql_sandbox5625.sock
     charset  = ascii
 
+# INSTALL
+
+Clone GitHub repo and install dependencies with cpanm.
+
+    git clone https://github.com/msestak/BlastoutAnalyze
+    cd BlastoutAnalyze
+    # repeat cpanm install until it installs all modules
+    cpanm -f -n --installdeps .
+    # update DBD::SQLite module
+    cpanm -n DBD::SQLite
+
 # LICENSE
 
 Copyright (C) Martin Sebastijan Šestak.
