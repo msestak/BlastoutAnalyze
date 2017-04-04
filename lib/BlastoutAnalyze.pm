@@ -1835,8 +1835,10 @@ sub import_blastdb {
                 # check for missing $prot_name in file
                 my $header;
                 if ( !$prot_id ) {
-                    #print "UNDEFINED:$_\n";
+                    print "UNDEFINED:$_\n";
                     ( $header, $fasta ) = $_ =~ m{\A([^\n]+)\n(.+)\z}smx;
+                    next PIPE if !$fasta;   # skip if there are is no sequence
+
                     #print "HEADER:$header\tFASTA:$fasta\n";
                     eval { ( $prot_id, $prot_name ) = split /\t/, $header; };
                     if ($@) {
