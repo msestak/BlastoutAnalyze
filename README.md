@@ -46,6 +46,9 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
     # reduce blastout based on cutoff (it deletes hits if less or equal to cutoff per phylostratum)
     BlastoutAnalyze.pm --mode=reduce_blastout --stats=t/data/analyze_hs_9606_cdhit_large_extracted --blastout=t/data/hs_all_plus_21_12_2015 --out=t/data/ --cutoff=3 -v -v
 
+    # export proteomes from BLAST database table to .ff file ready for BLAST
+    BlastoutAnalyze.pm --mode=export_to_ff --out=/msestak/db_22_03_2017/data/all_ff_final/ --table_name=old_proteomes -d phylodb -p msandbox -u msandbox -po 5716 -s /tmp/mysql_sandbox5716.sock
+
 # DESCRIPTION
 
 BlastoutAnalyze is modulino used to analyze BLAST database (to get content in genomes and sequences) and BLAST output (to figure out wwhere are hits comming from). It includes config, command-line and logging management.
@@ -225,6 +228,13 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
     It works by importing to SQLite database, doing analysis there and exporting to $out directory (blastout\_export file is deleted if it already exists).
     SQLite database is also deleted after the analysis.
 
+- export\_to\_ff
+
+        # export proteomes from BLAST database table to .ff file ready for BLAST
+        BlastoutAnalyze.pm --mode=export_to_ff --out=/msestak/db_22_03_2017/data/all_ff_final/ --table_name=old_proteomes -d phylodb -p msandbox -u msandbox -po 5716 -s /tmp/mysql_sandbox5716.sock
+
+    It exports all proteomes from BLAST database table into .ff files named after tax\_id. It has structure needed for PhyloStrat (pgi|ti|pi identifier). Works opposite of --mode=import\_blastdb.
+
 # CONFIGURATION
 
 All configuration in set in blastoutanalyze.cnf that is found in ./lib directory (it can also be set with --config option on command line). It follows [Config::Std](https://metacpan.org/pod/Config::Std) format and rules.
@@ -258,7 +268,7 @@ Clone GitHub repo and install dependencies with cpanm.
 
 # LICENSE
 
-Copyright (C) Martin Sebastijan Šestak.
+Copyright (C) 2016-2017 Martin Sebastijan Šestak.
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself.
