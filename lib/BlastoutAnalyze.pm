@@ -204,6 +204,7 @@ sub get_parameters_from_cmd {
         'tax_id|ti=i'         => \$cli{tax_id},
         'max_processes=i'     => \$cli{max_processes},
         'cutoff=i'            => \$cli{cutoff},
+        'cutoff_ps1=i'        => \$cli{cutoff_ps1},
 
         # top hits
         'top_hits=i' => \$cli{top_hits},
@@ -2377,7 +2378,6 @@ sub reduce_blastout {
     my $out      = $param_href->{out}      or $log->logcroak('no $out specified on command line!');
     my $blastout = $param_href->{blastout} or $log->logcroak('no $blastout specified on command line!');
     my $stats    = $param_href->{stats}    or $log->logcroak('no $stats specified on command line!');
-    my $cutoff   = $param_href->{cutoff}   or $log->logcroak('no $cutoff specified on command line!');
 
     # create SQLite database
     my $dbfile = path( $out, "blastout$$.db" );
@@ -2508,15 +2508,25 @@ sub _import_blastout_partial {
 
     my $out      = $param_href->{out}      or $log->logcroak('no $out specified on command line!');
     my $blastout = $param_href->{blastout} or $log->logcroak('no $blastout specified on command line!');
-    my $cutoff   = $param_href->{cutoff}   or $log->logcroak('no $cutoff specified on command line!');
-    my $dbh      = $param_href->{dbh}      or $log->logcroak('no $dbh sent to _import_blastout_partial()!');
+    my $cutoff   = $param_href->{cutoff}   or $log->logwarn('no $cutoff specified on command line. Using $cutoff_ps1!');
+    my $cutoff_ps1 = defined $param_href->{cutoff_ps1} ? $param_href->{cutoff_ps1} : undef;
+    if ( !$cutoff and !$cutoff_ps1 ) {
+        $log->logcroak('no $cutoff nor $cutoff_ps1 specified on command line thus aborting!');
+    }
+    my $dbh = $param_href->{dbh} or $log->logcroak('no $dbh sent to _import_blastout_partial()!');
     my $analyze_tbl = $param_href->{analyze_tbl}
       or $log->logcroak('no $analyze_tbl sent to _import_blastout_partial()!');
 
     # create blastout table
     my $blastout_tbl = path($blastout)->basename;
     $blastout_tbl =~ s/[.-]/_/g;    #for files that have dots in name
-    my $blastout_ex = path( $out, $blastout_tbl . "_cutoff$cutoff" );
+    my $blastout_ex;
+    if ($cutoff_ps1) {
+        $blastout_ex = path( $out, $blastout_tbl . "_cutoff_ps1_$cutoff_ps1" );
+    }
+    else {
+        $blastout_ex = path( $out, $blastout_tbl . "_cutoff$cutoff" );
+    }
 
     # check if blastout_ex file exists and delete it
     if ( -f $blastout_ex ) {
@@ -2581,9 +2591,9 @@ sub _import_blastout_partial {
 
     $log->debug("Report: started processing of $param_href->{blastout}");
     local $.;
-    my $protid_cnt = 0;
-    my $exported_cnt    = 0;
-    my $total_cnt = 0;
+    my $protid_cnt   = 0;
+    my $exported_cnt = 0;
+    my $total_cnt    = 0;
 
     # insert entire file in one transaction
     $dbh->{AutoCommit} = 0;
@@ -2685,7 +2695,8 @@ sub _cutoff_pruning {
     $log->logcroak('_cutoff_pruning() needs a $param_href') unless @_ == 1;
     my ($param_href) = @_;
 
-    my $cutoff  = $param_href->{cutoff}  or $log->logcroak('no $cutoff specified on command line!');
+    my $cutoff_ps1 = defined $param_href->{cutoff_ps1} ? $param_href->{cutoff_ps1} : undef;
+    my $cutoff  = $param_href->{cutoff};
     my $dbh     = $param_href->{dbh}     or $log->logcroak('no $dbh sent to _cutoff_pruning()!');
     my $prot_id = $param_href->{prot_id} or $log->logcroak('no $prot_id sent to _cutoff_pruning()!');
     my $analyze_tbl = $param_href->{analyze_tbl}
@@ -2694,25 +2705,49 @@ sub _cutoff_pruning {
       or $log->logcroak('no $blastout_tbl sent to _cutoff_pruning()!');
     my $blastex_fh = $param_href->{blastex_fh} or $log->logcroak('no $blastex_fh sent to _cutoff_pruning()!');
 
-    # select ps which are smaller or equal than cutoff
-    my $ps_select = sprintf(
-        qq{
-    SELECT an.ps, COUNT(an.ps) AS ps_cnt FROM %s AS bl INNER JOIN %s AS an ON bl.ti = an.ti WHERE prot_id = %s GROUP BY an.ps HAVING ps_cnt <= ?
-    }, $dbh->quote_identifier($blastout_tbl), $dbh->quote_identifier($analyze_tbl), $dbh->quote($prot_id)
-    );
-    $log->trace("Report: $ps_select");
-    my $sth_sel = $dbh->prepare($ps_select);
-    $sth_sel->bind_param(1, $cutoff, SQL_INTEGER);
-    $sth_sel->execute();
+    # split logic based on existence of $cutoff_ps1 (shallow analysis)
+    my @ps;
+    if ($cutoff_ps1) {
 
-    # get column phylostrata to array to iterate insert query on them
-    my @ps = map { $_->[0] } @{ $sth_sel->fetchall_arrayref([0]) };
-    $log->trace( 'Returned phylostrata to delete: {', join( '}{', @ps ), '}' );
+        # select ps1 if is smaller or equal than cutoff_ps1
+        my $ps_select_ps1 = sprintf(
+            qq{
+        SELECT an.ps, COUNT(an.ps) AS ps_cnt FROM %s AS bl INNER JOIN %s AS an ON bl.ti = an.ti
+        WHERE prot_id = %s AND an.ps = 1 GROUP BY an.ps HAVING ps_cnt <= ?
+        }, $dbh->quote_identifier($blastout_tbl), $dbh->quote_identifier($analyze_tbl), $dbh->quote($prot_id)
+        );
+        $log->trace("Report: $ps_select_ps1");
+        my $sth_sel = $dbh->prepare($ps_select_ps1);
+        $sth_sel->bind_param( 1, $cutoff_ps1, SQL_INTEGER );
+        $sth_sel->execute();
+
+        # get column phylostrata to array to iterate insert query on them
+        @ps = map { $_->[0] } @{ $sth_sel->fetchall_arrayref( [0] ) };
+        $log->trace( 'Returned phylostrata to delete: {', join( '}{', @ps ), '}' );
+    }
+    else {
+        # select ps which are smaller or equal than cutoff
+        my $ps_select = sprintf(
+            qq{
+        SELECT an.ps, COUNT(an.ps) AS ps_cnt FROM %s AS bl INNER JOIN %s AS an ON bl.ti = an.ti
+        WHERE prot_id = %s GROUP BY an.ps HAVING ps_cnt <= ?
+        }, $dbh->quote_identifier($blastout_tbl), $dbh->quote_identifier($analyze_tbl), $dbh->quote($prot_id)
+        );
+        $log->trace("Report: $ps_select");
+        my $sth_sel = $dbh->prepare($ps_select);
+        $sth_sel->bind_param( 1, $cutoff, SQL_INTEGER );
+        $sth_sel->execute();
+
+        # get column phylostrata to array to iterate insert query on them
+        @ps = map { $_->[0] } @{ $sth_sel->fetchall_arrayref( [0] ) };
+        $log->trace( 'Returned phylostrata to delete: {', join( '}{', @ps ), '}' );
+    }
 
     # delete rows which have tis from phylostrata smaller or equal to cutoff
     my $del_blastout = sprintf(
         qq{
-    DELETE FROM %s WHERE ti IN (SELECT ti FROM %s AS an WHERE an.ps IN(} . join(',',('?') x @ps) . qq{)) AND prot_id = %s
+    DELETE FROM %s WHERE ti IN (SELECT ti FROM %s AS an WHERE an.ps IN(}
+          . join( ',', ('?') x @ps ) . qq{)) AND prot_id = %s
     }, $dbh->quote_identifier($blastout_tbl), $dbh->quote_identifier($analyze_tbl), $dbh->quote($prot_id)
     );
     my $sth_del = $dbh->prepare($del_blastout);
@@ -2748,15 +2783,18 @@ sub _cutoff_pruning {
     $log->debug("Action: exported $row_cnt rows for $prot_id");
 
     # truncate blastout_tbl to reduce size of database
-    my $blastout_del = sprintf( qq{
+    my $blastout_del = sprintf(
+        qq{
     DELETE FROM %s
-    }, $dbh->quote_identifier($blastout_tbl) );
+    }, $dbh->quote_identifier($blastout_tbl)
+    );
     $log->trace("Report: $blastout_del");
     eval { $dbh->do($blastout_del); };
     $log->error("Action: deleting $blastout_tbl after $prot_id failed: $@") if $@;
     $log->debug("Action: deleted $blastout_tbl table after $prot_id") unless $@;
 
     return $row_cnt;
+
 }
 
 
@@ -2811,7 +2849,11 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
     BlastoutAnalyze.pm --mode=top_hits -d kam --top_hits=10
 
     # reduce blastout based on cutoff (it deletes hits if less or equal to cutoff per phylostratum)
-    BlastoutAnalyze.pm --mode=reduce_blastout --stats=t/data/analyze_hs_9606_cdhit_large_extracted --blastout=t/data/hs_all_plus_21_12_2015 --out=t/data/ --cutoff=3 -v -v
+    # or
+    BlastoutAnalyze.pm --mode=reduce_blastout --stats=t/data/analyze_hs_9606_cdhit_large_extracted --blastout=t/data/hs_all_plus_21_12_2015 --out=t/data/ --cutoff=3 -v
+    # reduce blastout based only on ps1 cutoff_ps1 (it deletes hits if less or equal to cutoff_ps1 from ps1)
+    # or
+    BlastoutAnalyze.pm --mode=reduce_blastout --stats=t/data/analyze_hs_9606_cdhit_large_extracted --blastout=t/data/hs_all_plus_21_12_2015 --out=t/data/ --cutoff_ps1=1 -v
 
 =head1 DESCRIPTION
 
@@ -2995,6 +3037,12 @@ It finds top N species with most BLAST hits (proteins found) in prokaryotes per 
 It deletes hits in a BLAST output file if number of tax ids per phylostratum is less or equal to cutoff. This means that if cutoff=3, all hits with 3 or less hits are deleted and only 4+ hits are retained.
 It requires blastout and analyze files. Analyze file is required to get distribution of tax ids per phylostratum.
 It works by importing to SQLite database, doing analysis there and exporting filtered BLAST output to $out directory (resulting blastout_export file is deleted if it already exists). SQLite database is also deleted after the analysis.
+
+ # reduce blastout based only on ps1 cutoff_ps1 (it deletes hits if less or equal to cutoff_ps1 from ps1)
+ # or
+ BlastoutAnalyze.pm --mode=reduce_blastout --stats=t/data/analyze_hs_9606_cdhit_large_extracted --blastout=t/data/hs_all_plus_21_12_2015 --out=t/data/ --cutoff_ps1=1 -v
+
+It deletes hits in a BLAST output file only from phylostratum 1 if number of tax ids per phylostratum is less or equal to cutoff_ps1. This means that if cutoff_ps1=1, all hits with only one hit in ps1 are deleted and only 2+ hits are retained.
 
 =back
 

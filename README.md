@@ -44,7 +44,11 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
     BlastoutAnalyze.pm --mode=top_hits -d kam --top_hits=10
 
     # reduce blastout based on cutoff (it deletes hits if less or equal to cutoff per phylostratum)
-    BlastoutAnalyze.pm --mode=reduce_blastout --stats=t/data/analyze_hs_9606_cdhit_large_extracted --blastout=t/data/hs_all_plus_21_12_2015 --out=t/data/ --cutoff=3 -v -v
+    # or
+    BlastoutAnalyze.pm --mode=reduce_blastout --stats=t/data/analyze_hs_9606_cdhit_large_extracted --blastout=t/data/hs_all_plus_21_12_2015 --out=t/data/ --cutoff=3 -v
+    # reduce blastout based only on ps1 cutoff_ps1 (it deletes hits if less or equal to cutoff_ps1 from ps1)
+    # or
+    BlastoutAnalyze.pm --mode=reduce_blastout --stats=t/data/analyze_hs_9606_cdhit_large_extracted --blastout=t/data/hs_all_plus_21_12_2015 --out=t/data/ --cutoff_ps1=1 -v
 
 # DESCRIPTION
 
@@ -224,6 +228,12 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
     It deletes hits in a BLAST output file if number of tax ids per phylostratum is less or equal to cutoff. This means that if cutoff=3, all hits with 3 or less hits are deleted and only 4+ hits are retained.
     It requires blastout and analyze files. Analyze file is required to get distribution of tax ids per phylostratum.
     It works by importing to SQLite database, doing analysis there and exporting filtered BLAST output to $out directory (resulting blastout\_export file is deleted if it already exists). SQLite database is also deleted after the analysis.
+
+        # reduce blastout based only on ps1 cutoff_ps1 (it deletes hits if less or equal to cutoff_ps1 from ps1)
+        # or
+        BlastoutAnalyze.pm --mode=reduce_blastout --stats=t/data/analyze_hs_9606_cdhit_large_extracted --blastout=t/data/hs_all_plus_21_12_2015 --out=t/data/ --cutoff_ps1=1 -v
+
+    It deletes hits in a BLAST output file only from phylostratum 1 if number of tax ids per phylostratum is less or equal to cutoff\_ps1. This means that if cutoff\_ps1=1, all hits with only one hit in ps1 are deleted and only 2+ hits are retained.
 
 # CONFIGURATION
 
