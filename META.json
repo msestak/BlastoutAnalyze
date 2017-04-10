@@ -1,7 +1,7 @@
 {
    "abstract" : "It's a modulino used to analyze BLAST output and database.",
    "author" : [
-      "Martin Sebastijan Šestak"
+      "-2017 Martin Sebastijan Šestak."
    ],
    "dynamic_config" : 0,
    "generated_by" : "Minilla/v3.0.4, CPAN::Meta::Converter version 2.150010",

@@ -2391,7 +2391,7 @@ sub reduce_blastout {
     $log->info( 'Report: connected to {', $dbfile, '} by dbh ', $dbh );
     $dbh->do("PRAGMA journal_mode = WAL");      # write ahead journal
     $dbh->do("PRAGMA synchronous = OFF");       # sync is off
-    $dbh->do("PRAGMA cache_size = 1000000");    # 1 GB
+    $dbh->do("PRAGMA cache_size = 1000000");    # 1 GB (1 mil pages x 1 Kb page)
 
     # import analyze stats
     my $analyze_tbl = _import_stats( { %{$param_href}, dbh => $dbh } );
@@ -2992,9 +2992,9 @@ It finds top N species with most BLAST hits (proteins found) in prokaryotes per 
  # reduce blastout based on cutoff (it deletes hits if less or equal to cutoff per phylostratum)
  BlastoutAnalyze.pm --mode=reduce_blastout --stats=t/data/analyze_hs_9606_cdhit_large_extracted --blastout=t/data/hs_all_plus_21_12_2015 --out=t/data/ --cutoff=3 -v -v
 
-It deletes hits in a BLAST output file if number of tax ids per phylostratum is less or equal to cutoff. It requires blastout and analyze files. Analyze file is required to get list of tax ids per phylostratum.
-It works by importing to SQLite database, doing analysis there and exporting to $out directory (blastout_export file is deleted if it already exists).
-SQLite database is also deleted after the analysis.
+It deletes hits in a BLAST output file if number of tax ids per phylostratum is less or equal to cutoff. This means that if cutoff=3, all hits with 3 or less hits are deleted and only 4+ hits are retained.
+It requires blastout and analyze files. Analyze file is required to get distribution of tax ids per phylostratum.
+It works by importing to SQLite database, doing analysis there and exporting filtered BLAST output to $out directory (resulting blastout_export file is deleted if it already exists). SQLite database is also deleted after the analysis.
 
 =back
 
