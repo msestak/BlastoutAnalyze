@@ -48,6 +48,7 @@ our @EXPORT_OK = qw{
   import_reports
   top_hits
   reduce_blastout
+  export_to_ff
 };
 
 #MODULINO - works with debugger too
@@ -104,6 +105,7 @@ sub run {
         import_reports       => \&import_reports,         # import expanded reports
         top_hits             => \&top_hits,               # create top N hits based on number of genes per domain
         reduce_blastout      => \&reduce_blastout,        # reduce blastout based on cutoff
+        export_to_ff         => \&export_to_ff,           # export proteomes fron blast database to .ff files
 
     );
 
@@ -205,6 +207,7 @@ sub get_parameters_from_cmd {
         'max_processes=i'     => \$cli{max_processes},
         'cutoff=i'            => \$cli{cutoff},
         'cutoff_ps1=i'        => \$cli{cutoff_ps1},
+        'table_name=s'        => \$cli{table_name},
 
         # top hits
         'top_hits=i' => \$cli{top_hits},
@@ -1836,8 +1839,10 @@ sub import_blastdb {
                 # check for missing $prot_name in file
                 my $header;
                 if ( !$prot_id ) {
-                    #print "UNDEFINED:$_\n";
+                    print "UNDEFINED:$_\n";
                     ( $header, $fasta ) = $_ =~ m{\A([^\n]+)\n(.+)\z}smx;
+                    next PIPE if !$fasta;   # skip if there are is no sequence
+
                     #print "HEADER:$header\tFASTA:$fasta\n";
                     eval { ( $prot_id, $prot_name ) = split /\t/, $header; };
                     if ($@) {
@@ -2798,6 +2803,73 @@ sub _cutoff_pruning {
 }
 
 
+## INTERFACE SUB ###
+# Usage      : export_to_ff
+# Purpose    : export proteomes to taxid.ff files
+# Returns    : nothing
+# Parameters : 
+# Throws     : croaks if wrong number of parameters
+# Comments   : files are ready for BLAST and PhyloStrat
+# See Also   : 
+sub export_to_ff {
+    my $log = Log::Log4perl::get_logger("main");
+    $log->logcroak('export_to_ff() needs {$param_href}') unless @_ == 1;
+    my ($param_href) = @_;
+
+    my $out           = $param_href->{out}        or $log->logcroak('no $out specified on command line!');
+    my $database      = $param_href->{database}   or $log->logcroak('no $database specified on command line!');
+    my $proteomes_tbl = $param_href->{table_name} or $log->logcroak('no $table_name specified on command line!');
+
+    # get new dbh
+    my $dbh = _dbi_connect($param_href);
+
+    # get all taxids from table (export by ti)
+    my $select_ti = sprintf(
+        qq{
+    SELECT DISTINCT ti
+    FROM %s
+    }, $dbh->quote_identifier($proteomes_tbl)
+    );
+    $log->trace("Report: $select_ti");
+    my @tis = map { $_->[0] } @{ $dbh->selectall_arrayref($select_ti) };
+    $log->info( "Action: retrieved " . scalar @tis . " tax_ids from ${database}.$proteomes_tbl" );
+
+    # query to select entire fasta sequence and print it to file
+    my $select_proteome = sprintf(
+        qq{
+    SELECT prot_id, prot_name, fasta
+    FROM %s
+    WHERE ti = ?
+    }, $dbh->quote_identifier($proteomes_tbl)
+    );
+    $log->trace("Report: $select_proteome");
+
+    # export each proteome
+    $log->info("Report: exporting proteomes to .ff files in $out");
+    foreach my $ti (@tis) {
+
+        # create new file based on ti
+        my $ti_path = path( $out, $ti . '.ff' );
+        open( my $proteome_fh, ">", $ti_path ) or $log->logdie("Error: can't open $ti_path for writing:$!");
+
+        # retrive proteome based on ti
+        my $sth = $dbh->prepare($select_proteome);
+        $sth->execute($ti);
+        my ( $prot_id, $prot_name, $fasta );
+        $sth->bind_columns( \( $prot_id, $prot_name, $fasta ) );
+        my $row_cnt = 0;
+        while ( $sth->fetchrow_arrayref ) {
+            print {$proteome_fh} ">$prot_id\t$prot_name\n$fasta\n";
+            $row_cnt++;
+        }
+        $log->debug("Action: exported $row_cnt rows to $ti_path");
+    }
+
+    return;
+}
+
+
+
 1;
 __END__
 
@@ -2854,6 +2926,9 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
     # reduce blastout based only on ps1 cutoff_ps1 (it deletes hits if less or equal to cutoff_ps1 from ps1)
     # or
     BlastoutAnalyze.pm --mode=reduce_blastout --stats=t/data/analyze_hs_9606_cdhit_large_extracted --blastout=t/data/hs_all_plus_21_12_2015 --out=t/data/ --cutoff_ps1=1 -v
+
+    # export proteomes from BLAST database table to .ff file ready for BLAST
+    BlastoutAnalyze.pm --mode=export_to_ff --out=/msestak/db_22_03_2017/data/all_ff_final/ --table_name=old_proteomes -d phylodb -p msandbox -u msandbox -po 5716 -s /tmp/mysql_sandbox5716.sock
 
 =head1 DESCRIPTION
 
@@ -3043,6 +3118,13 @@ It works by importing to SQLite database, doing analysis there and exporting fil
  BlastoutAnalyze.pm --mode=reduce_blastout --stats=t/data/analyze_hs_9606_cdhit_large_extracted --blastout=t/data/hs_all_plus_21_12_2015 --out=t/data/ --cutoff_ps1=1 -v
 
 It deletes hits in a BLAST output file only from phylostratum 1 if number of tax ids per phylostratum is less or equal to cutoff_ps1. This means that if cutoff_ps1=1, all hits with only one hit in ps1 are deleted and only 2+ hits are retained.
+
+=item export_to_ff
+
+  # export proteomes from BLAST database table to .ff file ready for BLAST
+  BlastoutAnalyze.pm --mode=export_to_ff --out=/msestak/db_22_03_2017/data/all_ff_final/ --table_name=old_proteomes -d phylodb -p msandbox -u msandbox -po 5716 -s /tmp/mysql_sandbox5716.sock
+
+It exports all proteomes from BLAST database table into .ff files named after tax_id. It has structure needed for PhyloStrat (pgi|ti|pi identifier). Works opposite of --mode=import_blastdb.
 
 =back
 

@@ -50,6 +50,9 @@ BlastoutAnalyze - It's a modulino used to analyze BLAST output and database.
     # or
     BlastoutAnalyze.pm --mode=reduce_blastout --stats=t/data/analyze_hs_9606_cdhit_large_extracted --blastout=t/data/hs_all_plus_21_12_2015 --out=t/data/ --cutoff_ps1=1 -v
 
+    # export proteomes from BLAST database table to .ff file ready for BLAST
+    BlastoutAnalyze.pm --mode=export_to_ff --out=/msestak/db_22_03_2017/data/all_ff_final/ --table_name=old_proteomes -d phylodb -p msandbox -u msandbox -po 5716 -s /tmp/mysql_sandbox5716.sock
+
 # DESCRIPTION
 
 BlastoutAnalyze is modulino used to analyze BLAST database (to get content in genomes and sequences) and BLAST output (to figure out wwhere are hits comming from). It includes config, command-line and logging management.
@@ -234,6 +237,13 @@ BlastoutAnalyze is modulino used to analyze BLAST database (to get content in ge
         BlastoutAnalyze.pm --mode=reduce_blastout --stats=t/data/analyze_hs_9606_cdhit_large_extracted --blastout=t/data/hs_all_plus_21_12_2015 --out=t/data/ --cutoff_ps1=1 -v
 
     It deletes hits in a BLAST output file only from phylostratum 1 if number of tax ids per phylostratum is less or equal to cutoff\_ps1. This means that if cutoff\_ps1=1, all hits with only one hit in ps1 are deleted and only 2+ hits are retained.
+
+- export\_to\_ff
+
+        # export proteomes from BLAST database table to .ff file ready for BLAST
+        BlastoutAnalyze.pm --mode=export_to_ff --out=/msestak/db_22_03_2017/data/all_ff_final/ --table_name=old_proteomes -d phylodb -p msandbox -u msandbox -po 5716 -s /tmp/mysql_sandbox5716.sock
+
+    It exports all proteomes from BLAST database table into .ff files named after tax\_id. It has structure needed for PhyloStrat (pgi|ti|pi identifier). Works opposite of --mode=import\_blastdb.
 
 # CONFIGURATION
 
